@@ -1,36 +1,43 @@
 # Calculadora de Claims — Coleta de Índices
 
-Projeto para construir a base de dados de índices econômicos aplicáveis a precatórios, alimentada por **duas fontes oficiais**:
+Projeto para construir a base de dados de índices econômicos aplicáveis a precatórios, alimentada por **três fontes oficiais**:
 
 - **BACEN SGS** — séries diárias/mensais de IPCA, IGP-DI, IGP-M, Selic, CDI, TR, IPCA-E e Poupança, via API JSON.
 - **TJSP — Tabelas Práticas** — PDFs oficiais com fatores acumulados de atualização monetária (atualmente, a Tabela da EC 113/2021).
+- **CJF — SICOM** — Tabelas de Correção Monetária e Valores Históricos dos Indexadores do Conselho da Justiça Federal, para as 6 categorias de ação judicial, via formulário web mensal.
 
-O script Python baixa, persiste e mantém atualizado tudo em SQLite local, com auditoria por hash de cada versão do PDF do TJSP.
+O script Python baixa, persiste e mantém atualizado tudo em SQLite local, com auditoria por hash de cada versão dos arquivos baixados.
 
 ---
 
 ## Estrutura do projeto
 
 ```
-Desenvolvimento de Software - Calculadora de Claims/
-├── coletar_indices.py        Entry point (executar este manualmente)
-├── executar_coleta.bat       Wrapper invocado pelo Task Scheduler
-├── agendar_windows.bat       Registra a rotina diária no Task Scheduler
-├── README.md                 Este arquivo
+Calculadora-Claims/
+├── coletar_indices.py           Entry point unificado (BACEN + TJSP + CJF)
+├── executar_coleta.bat          Wrapper diário invocado pelo Task Scheduler
+├── executar_coleta_cjf.bat      Wrapper mensal CJF invocado pelo Task Scheduler
+├── agendar_windows.bat          Registra a rotina diária no Task Scheduler
+├── agendar_cjf_mensal.bat       Registra a rotina mensal CJF no Task Scheduler
+├── README.md                    Este arquivo
 ├── src/
-│   ├── config.py             Caminhos, séries BACEN e tabelas TJSP
-│   ├── bacen.py              Cliente HTTP da API SGS (BACEN)
-│   ├── tjsp.py               Download + parser das tabelas TJSP (PDF)
-│   ├── db.py                 Camada SQLite (BACEN + TJSP)
-│   └── coletor.py            Orquestrador (BACEN + TJSP)
+│   ├── config.py                Caminhos, séries BACEN, tabelas TJSP e CJF
+│   ├── bacen.py                 Cliente HTTP da API SGS (BACEN)
+│   ├── tjsp.py                  Download + parser das tabelas TJSP (PDF)
+│   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
+│   ├── db.py                    Camada SQLite (BACEN + TJSP + CJF)
+│   └── coletor.py               Orquestrador (BACEN + TJSP + CJF)
 ├── data/
-│   └── claims.db             Banco SQLite (criado na 1ª execução)
+│   └── claims.db                Banco SQLite (criado na 1ª execução)
 ├── referencias/
-│   └── tjsp/
-│       └── EC113_2021_AAAA-MM-DD_<hash>.pdf  Versões arquivadas dos PDFs
+│   ├── tjsp/
+│   │   └── EC113_2021_AAAA-MM-DD_<hash>.pdf   Versões arquivadas dos PDFs TJSP
+│   └── cjf/
+│       └── TCM_3_AAAA-MM-DD_<hash>.xls        Versões arquivadas dos XLS CJF
 └── logs/
-    ├── coleta_AAAA-MM-DD.log Logs diários do Python
-    └── agendador.log         Saída capturada do wrapper
+    ├── coleta_AAAA-MM-DD.log    Logs diários do Python
+    ├── agendador.log            Saída do wrapper diário
+    └── agendador_cjf.log        Saída do wrapper mensal CJF
 ```
 
 ## Séries coletadas
@@ -56,9 +63,33 @@ Para acrescentar, remover ou alterar séries, edite o dicionário `SERIES` em `s
 
 Endpoint: `https://api.tjsp.jus.br/Handlers/Handler/FileFetch.ashx?codigo={código}`.
 
-Cada execução baixa o PDF, calcula o SHA-256 e só reprocessa quando há mudança. Os PDFs antigos ficam preservados em `referencias/tjsp/` com o hash no nome — auditoria completa de qual versão sustentou cada cálculo.
+Cada execução baixa o PDF, calcula o SHA-256 e só reprocessa quando há mudança. Os PDFs ficam preservados em `referencias/tjsp/` com o hash no nome.
 
-Para acrescentar uma nova tabela do TJSP (ex.: tabela de juros), edite o dicionário `TJSP_TABELAS` em `src/config.py`.
+Para acrescentar uma nova tabela TJSP, edite o dicionário `TJSP_TABELAS` em `src/config.py`.
+
+## Tabelas CJF coletadas
+
+O CJF (Conselho da Justiça Federal) publica, via [SICOM](https://sicom.cjf.jus.br/tabelaCorMor.php), dois tipos de tabela para **6 categorias de ação judicial**:
+
+| Tipo | Descrição |
+|------|-----------|
+| **TCM** | Tabela de Correção Monetária — coeficientes de atualização direta |
+| **VHI** | Valores Históricos dos Indexadores — valores nominais de ORTN, OTN, BTN, UFIR, IPCA-E, Selic etc. |
+
+| `seqEncadeamento` | Tipo de ação |
+|:-----------------:|-------------|
+| 1 | Desapropriações |
+| 2 | Benefício Previdenciário |
+| 3 | Ações Condenatórias em Geral (servidores e empregados públicos) |
+| 4 | Repetição de Indébito Tributário |
+| 5 | Ações Condenatórias em Geral (Devedor Fazenda Pública) |
+| 6 | Ações Condenatórias em Geral (devedor não enquadrado como Fazenda Pública) |
+
+São coletadas **12 combinações** (TCM × 6 + VHI × 6), totalizando ~8.400 fatores históricos de 1964 até o mês corrente.
+
+A coleta é **mensal** (as tabelas são publicadas uma vez por mês). O arquivo XLS é um HTML gerado dinamicamente pelo formulário SICOM — o script faz POST ao formulário, segue o redirect e baixa o arquivo gerado. SHA-256 garante que só há reprocessamento quando o CJF publica uma nova versão.
+
+Para adicionar ou remover combinações, edite o dicionário `CJF_TABELAS` em `src/config.py`.
 
 ## Pré-requisitos
 
@@ -101,22 +132,24 @@ O arquivo de banco fica em `data/claims.db`.
 A partir da segunda execução, o script detecta automaticamente que já existe histórico e faz apenas a carga incremental — retrocedendo 7 dias da última data conhecida para reapanhar eventuais revisões retroativas do BACEN.
 
 ```cmd
-python coletar_indices.py            # padrão: BACEN auto + TJSP
-python coletar_indices.py --resumo   # apenas mostra o resumo do banco
-python coletar_indices.py --completo # força recarga histórica BACEN
-python coletar_indices.py --so-bacen # roda apenas a coleta BACEN
-python coletar_indices.py --so-tjsp  # roda apenas a coleta TJSP
+python coletar_indices.py                      # padrão: BACEN auto + TJSP + CJF
+python coletar_indices.py --resumo             # apenas mostra o resumo do banco
+python coletar_indices.py --completo           # força recarga histórica BACEN
+python coletar_indices.py --so-bacen           # roda apenas a coleta BACEN
+python coletar_indices.py --so-tjsp            # roda apenas a coleta TJSP
+python coletar_indices.py --so-cjf             # roda apenas a coleta CJF (mês corrente)
+python coletar_indices.py --so-cjf --mes 5 --ano 2025  # CJF para mês/ano específico
 ```
 
-## Agendar rotina diária (Windows Task Scheduler)
+## Agendar rotinas automáticas (Windows Task Scheduler)
+
+São duas rotinas independentes:
+
+### Rotina diária — BACEN + TJSP
 
 1. Clique com o botão direito em `agendar_windows.bat`.
 2. Escolha **Executar como administrador**.
-3. O script registra a tarefa `CalculadoraClaims_ColetaIndicesBACEN` para rodar todo dia às **13:00** (edite a linha `set "HORARIO=13:00"` no `.bat` para mudar o horário).
-
-O agendador aponta para o wrapper `executar_coleta.bat`, que se localiza na própria pasta do projeto via `%~dp0` e roda o coletor. Esse wrapper existe para contornar o limite de 261 caracteres do parâmetro `/TR` do `schtasks` quando o caminho do projeto é longo (caso de pastas do OneDrive com nomes extensos).
-
-Para verificar, executar manualmente ou remover:
+3. Registra a tarefa `CalculadoraClaims_ColetaIndicesBACEN` para rodar todo dia às **13:00**.
 
 ```cmd
 schtasks /Query  /TN "CalculadoraClaims_ColetaIndicesBACEN" /V /FO LIST
@@ -124,7 +157,19 @@ schtasks /Run    /TN "CalculadoraClaims_ColetaIndicesBACEN"
 schtasks /Delete /TN "CalculadoraClaims_ColetaIndicesBACEN" /F
 ```
 
-Os logs de cada execução agendada vão para `logs/agendador.log` (saída do wrapper) e `logs/coleta_AAAA-MM-DD.log` (logs estruturados do Python).
+### Rotina mensal — CJF
+
+1. Clique com o botão direito em `agendar_cjf_mensal.bat`.
+2. Escolha **Executar como administrador**.
+3. Registra a tarefa `CalculadoraClaims_ColetaCJF_Mensal` para rodar no **dia 5 de cada mês às 08:00** (o CJF costuma publicar as tabelas do mês corrente nos primeiros dias do mês).
+
+```cmd
+schtasks /Query  /TN "CalculadoraClaims_ColetaCJF_Mensal" /V /FO LIST
+schtasks /Run    /TN "CalculadoraClaims_ColetaCJF_Mensal"
+schtasks /Delete /TN "CalculadoraClaims_ColetaCJF_Mensal" /F
+```
+
+Os logs ficam em `logs/agendador.log` (wrapper diário), `logs/agendador_cjf.log` (wrapper mensal) e `logs/coleta_AAAA-MM-DD.log` (logs estruturados do Python).
 
 ## Estrutura do banco
 
@@ -185,6 +230,36 @@ Registra início, fim, status (`success` / `partial` / `error`), contagens e men
 
 `UNIQUE (tabela_chave, ano, mes)` — uma linha por mês/ano em cada tabela.
 
+**Tabela `cjf_publicacoes`** — versões dos XLS baixados do CJF
+
+| coluna            | tipo    |
+|-------------------|---------|
+| id (PK)           | INTEGER |
+| tabela_chave      | TEXT (ex.: "TCM_3", "VHI_2") |
+| tipo_tabela       | TEXT ("TCM" ou "VHI") |
+| seq_encadeamento  | INTEGER (1..6) |
+| mes_referencia    | INTEGER |
+| ano_referencia    | INTEGER |
+| data_download     | TEXT    |
+| sha256            | TEXT    |
+| caminho_arquivo   | TEXT (path em referencias/cjf/) |
+
+`UNIQUE (tabela_chave, sha256)` — mesma versão não duplica.
+
+**Tabela `cjf_fatores`** — coeficientes/valores extraídos do CJF
+
+| coluna         | tipo    |
+|----------------|---------|
+| id (PK)        | INTEGER |
+| tabela_chave   | TEXT    |
+| ano            | INTEGER |
+| mes            | INTEGER (1..12) |
+| valor          | REAL    |
+| publicacao_id  | INTEGER → cjf_publicacoes.id |
+| atualizado_em  | TEXT    |
+
+`UNIQUE (tabela_chave, ano, mes)` — uma linha por mês/ano em cada tabela.
+
 ## Consultar o banco
 
 Você pode abrir `data/claims.db` em qualquer ferramenta SQLite. Recomendo:
@@ -217,7 +292,8 @@ Isso evita o acúmulo de erros de ponto flutuante em séries longas — fundamen
 
 1. ✅ Ingestão diária de índices BACEN (8 séries)
 2. ✅ Ingestão de Tabelas Práticas do TJSP (EC 113/2021)
-3. ⏭️ Motor de cálculo de fatores acumulados entre datas (suporta BACEN e TJSP)
-4. ⏭️ Importação da planilha-protótipo de cálculos
-5. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
-6. ⏭️ Definir usuários finais e segurança/auditoria
+3. ✅ Ingestão mensal das Tabelas CJF — SICOM (TCM + VHI × 6 categorias)
+4. ⏭️ Motor de cálculo de fatores acumulados entre datas (BACEN, TJSP e CJF)
+5. ⏭️ Importação da planilha-protótipo de cálculos
+6. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
+7. ⏭️ Definir usuários finais e segurança/auditoria

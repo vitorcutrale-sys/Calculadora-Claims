@@ -2,7 +2,7 @@
 
 Este documento é o registro narrativo do que foi construído, por que foi construído daquela forma, e o que aprendemos ao longo do caminho. Diferente do `README.md` (que documenta o **estado atual** do projeto para quem chega novo), este arquivo conta a **história** do desenvolvimento.
 
-Última atualização: **2026-05-28**.
+Última atualização: **2026-06-03**.
 
 ---
 
@@ -14,8 +14,9 @@ Este documento é o registro narrativo do que foi construído, por que foi const
 4. [Lições aprendidas na Fase 1](#4-lições-aprendidas-na-fase-1)
 5. [Agendamento via Windows Task Scheduler](#5-agendamento-via-windows-task-scheduler)
 6. [Fase 2 — Ingestão das Tabelas Práticas do TJSP](#6-fase-2--ingestão-das-tabelas-práticas-do-tjsp)
-7. [Estado atual do projeto](#7-estado-atual-do-projeto)
-8. [Próximas fases](#8-próximas-fases)
+7. [Fase 3 — Ingestão das Tabelas CJF (Justiça Federal)](#7-fase-3--ingestão-das-tabelas-cjf-justiça-federal)
+8. [Estado atual do projeto](#8-estado-atual-do-projeto)
+9. [Próximas fases](#9-próximas-fases)
 
 ---
 
@@ -224,32 +225,93 @@ O orquestrador (`src/coletor.py`) agora tem duas funções principais:
 
 O `coletar_indices.py` (entry point) ganhou flags: `--so-bacen` e `--so-tjsp` permitem rodar uma fonte isoladamente; o comportamento padrão (sem flags) é a coleta completa.
 
-## 7. Estado atual do projeto
+## 7. Fase 3 — Ingestão das Tabelas CJF (Justiça Federal)
+
+Com BACEN e TJSP consolidados, a terceira fonte de dados foi o **SICOM do Conselho da Justiça Federal** — o sistema que publica as Tabelas de Correção Monetária aplicáveis a processos na Justiça Federal.
+
+### Descoberta do endpoint
+
+A página pública (`https://sicom.cjf.jus.br/tabelaCorMor.php`) apresenta um formulário com campos dinâmicos populados via AJAX. O inspecionamento do HTML e dos arquivos JavaScript (`submeter.js`, `funcoes.js`) revelou a estrutura completa:
+
+- O formulário faz **POST** para a própria página com os campos:
+  - `acao=geraTabelaIndice` (hidden)
+  - `tipoTabela`: `TCM` (Tabela de Correção Monetária) ou `VHI` (Valores Históricos dos Indexadores)
+  - `seqEncadeamento`: 1 a 6 (tipo de ação judicial)
+  - `mesIndice` e `anoIndice`: mês e ano de referência
+  - `tipoArquivo`: `xls`
+- A resposta contém um `window.location.href` com o caminho do arquivo gerado (ex.: `arquivos/temp/2026_06_tabela_de_correcao_monetaria.xls`)
+- Um segundo request baixa esse arquivo
+
+O "XLS" é, na prática, um **HTML com namespace do Excel** (MHTML) — não um binário `.xlsx`. Isso permitiu fazer o parser com regex puro, sem bibliotecas externas adicionais.
+
+### Diferenças em relação ao TJSP
+
+| Aspecto | TJSP | CJF |
+|---------|------|-----|
+| Formato | PDF binário | HTML disfarçado de XLS |
+| Parser | `pdfplumber` | `re` (stdlib) |
+| Periodicidade | mensal | mensal |
+| Tabelas por execução | 1 | 12 (TCM×6 + VHI×6) |
+| Geração | arquivo estático no CMS | arquivo gerado por POST |
+
+### O parser
+
+O XLS HTML tem estrutura em tabela HTML com linhas `<tr><td>` onde:
+- A **primeira célula** de cada linha de dados contém exatamente o ano (ex.: `1964`)
+- As **células seguintes** contêm os 12 valores mensais em decimal brasileiro
+
+O bug inicial do parser foi o regex `^\s*(\d{4})\s` (que exige espaço após o ano) aplicado ao texto da célula — que contém exatamente `"1964"` sem espaços. A correção foi usar `^\s*(\d{4})\s*$`, que valida a célula inteira como um ano de 4 dígitos.
+
+Após a correção, a primeira coleta extraiu **8.442 fatores** (12 tabelas × ~700 fatores cada, de 1964 a 2026).
+
+### Idempotência e cadência mensal
+
+A mesma estratégia de hash SHA-256 do TJSP foi aplicada: cada execução baixa o arquivo, calcula o hash e só reprocessa se mudou. Isso permite chamar a rotina diariamente sem custo extra — na prática, só haverá reprocessamento uma vez por mês, quando o CJF publicar a versão atualizada.
+
+A rotina mensal foi agendada para o **dia 5 de cada mês** (quando o CJF costuma ter publicado os dados do mês corrente) via `agendar_cjf_mensal.bat`, separada da rotina diária do BACEN/TJSP.
+
+### Schema CJF
+
+Duas novas tabelas, seguindo o mesmo padrão do TJSP:
+
+- **`cjf_publicacoes`** — um registro por download (chave, tipo, seq_encadeamento, mês/ano de referência, sha256, caminho)
+- **`cjf_fatores`** — valores em formato longo, `UNIQUE(tabela_chave, ano, mes)`
+
+### Integração ao coletor
+
+O `coletor.py` ganhou `coletar_cjf(mes, ano)` e `coletar_tudo()` passou a incluir CJF após BACEN e TJSP. O `coletar_indices.py` ganhou os flags `--so-cjf`, `--mes` e `--ano`.
+
+## 8. Estado atual do projeto
 
 ```
-Desenvolvimento de Software - Calculadora de Claims/
-├── coletar_indices.py        Entry point unificado (BACEN + TJSP)
-├── executar_coleta.bat       Wrapper invocado pelo Task Scheduler
-├── agendar_windows.bat       Registra a rotina diária no Task Scheduler
-├── README.md                 Documentação do estado atual
-├── JORNADA_DESENVOLVIMENTO.md (este arquivo)
+Calculadora-Claims/
+├── coletar_indices.py           Entry point unificado (BACEN + TJSP + CJF)
+├── executar_coleta.bat          Wrapper diário (Task Scheduler)
+├── executar_coleta_cjf.bat      Wrapper mensal CJF (Task Scheduler)
+├── agendar_windows.bat          Registra rotina diária no Task Scheduler
+├── agendar_cjf_mensal.bat       Registra rotina mensal CJF no Task Scheduler
+├── README.md                    Documentação do estado atual
+├── JORNADA_DESENVOLVIMENTO.md   (este arquivo)
 ├── src/
-│   ├── config.py             Caminhos, séries BACEN, tabelas TJSP
-│   ├── bacen.py              Cliente HTTP da API SGS
-│   ├── tjsp.py               Download + parser das tabelas TJSP
-│   ├── db.py                 Camada SQLite (schema completo + helpers)
-│   └── coletor.py            Orquestrador (BACEN + TJSP)
+│   ├── config.py                Caminhos, séries BACEN, tabelas TJSP e CJF
+│   ├── bacen.py                 Cliente HTTP da API SGS (BACEN)
+│   ├── tjsp.py                  Download + parser das tabelas TJSP (PDF)
+│   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
+│   ├── db.py                    Camada SQLite (schema completo + helpers)
+│   └── coletor.py               Orquestrador (BACEN + TJSP + CJF)
 ├── data/
-│   └── claims.db             Banco SQLite com toda a base
+│   └── claims.db                Banco SQLite com toda a base
 ├── referencias/
-│   ├── Tabela EC113.pdf      PDF original baixado manualmente para validação
-│   └── tjsp/                 Versões arquivadas dos PDFs baixados pelo script
+│   ├── Tabela EC113.pdf         PDF original (validação manual)
+│   ├── tjsp/                    Versões arquivadas dos PDFs TJSP
+│   └── cjf/                     Versões arquivadas dos XLS CJF
 └── logs/
-    ├── coleta_AAAA-MM-DD.log Logs estruturados do Python
-    └── agendador.log         Saída capturada do wrapper
+    ├── coleta_AAAA-MM-DD.log    Logs estruturados do Python
+    ├── agendador.log            Saída do wrapper diário
+    └── agendador_cjf.log        Saída do wrapper mensal CJF
 ```
 
-**Schema SQLite** (5 tabelas):
+**Schema SQLite** (7 tabelas):
 
 | Tabela | Conteúdo |
 |--------|----------|
@@ -258,28 +320,32 @@ Desenvolvimento de Software - Calculadora de Claims/
 | `coletas_log` | Auditoria de cada execução do coletor |
 | `tjsp_publicacoes` | Histórico de PDFs baixados do TJSP (com SHA-256) |
 | `tjsp_fatores` | Fatores acumulados extraídos dos PDFs TJSP |
+| `cjf_publicacoes` | Histórico de XLS baixados do CJF (com SHA-256) |
+| `cjf_fatores` | Coeficientes/valores extraídos das tabelas CJF |
 
 **Dependências externas:**
-- `pdfplumber` (única) — para parsing dos PDFs TJSP
+- `pdfplumber` (única) — para parsing dos PDFs TJSP; módulos BACEN e CJF usam apenas stdlib
 
 **Operação:**
-- Tarefa `CalculadoraClaims_ColetaIndicesBACEN` registrada no Windows Task Scheduler, roda diariamente às 13:00 via wrapper `executar_coleta.bat`
-- Logs em `logs/coleta_AAAA-MM-DD.log` (Python) e `logs/agendador.log` (wrapper)
+- Tarefa `CalculadoraClaims_ColetaIndicesBACEN` — roda diariamente às 13:00 (BACEN + TJSP)
+- Tarefa `CalculadoraClaims_ColetaCJF_Mensal` — roda todo dia 5 às 08:00 (CJF, 12 tabelas)
+- Logs em `logs/coleta_AAAA-MM-DD.log`, `logs/agendador.log` e `logs/agendador_cjf.log`
 
-## 8. Próximas fases
+## 9. Próximas fases
 
 | # | Fase | Status |
 |---|------|--------|
 | 1 | Ingestão BACEN (8 séries) | ✅ Concluído |
 | 2 | Ingestão TJSP (EC 113/2021) | ✅ Concluído |
-| 3 | Motor de cálculo de fatores acumulados entre datas | ⏭️ Próximo |
-| 4 | Importação da planilha-protótipo | ⏭️ |
-| 5 | Interface (CLI ou Streamlit) | ⏭️ |
-| 6 | Definição de usuários, segurança e auditoria | ⏭️ |
+| 3 | Ingestão CJF — SICOM (TCM + VHI × 6 categorias) | ✅ Concluído |
+| 4 | Motor de cálculo de fatores acumulados entre datas | ⏭️ Próximo |
+| 5 | Importação da planilha-protótipo | ⏭️ |
+| 6 | Interface (CLI ou Streamlit) | ⏭️ |
+| 7 | Definição de usuários, segurança e auditoria | ⏭️ |
 
-A próxima fase — **motor de cálculo** — vai responder perguntas como "qual o fator de correção EC 113 entre 03/2022 e 05/2026?" ou "atualize R$ X de data Y até hoje pela Selic acumulada". É onde os dados ingeridos viram valor de negócio.
+A próxima fase — **motor de cálculo** — vai responder perguntas como "qual o fator de correção EC 113 entre 03/2022 e 05/2026?" ou "atualize R$ X de data Y até hoje pela Selic acumulada". É onde os dados ingeridos viram valor de negócio. Com BACEN, TJSP e CJF todos disponíveis em SQLite, o motor terá acesso a todas as fontes oficiais utilizadas na Justiça Federal e no TJSP.
 
 Duas decisões técnicas já antecipadas para essa fase:
 
 - **Aritmética em `Decimal`**, não `float`. Os valores armazenados em SQLite estão como `REAL` (precisão suficiente para guardar fielmente), mas qualquer multiplicação de fatores deve ler como `Decimal(str(valor))` para não acumular erro de ponto flutuante em séries longas.
-- **Tratamento das conversões monetárias históricas** (Cr$/NCr$/Cz$/etc.) — implementadas no motor de cálculo, com as regras vindo do rodapé do PDF do TJSP que já está arquivado.
+- **Tratamento das conversões monetárias históricas** (Cr$/NCr$/Cz$/etc.) — implementadas no motor de cálculo, com as regras vindo do rodapé dos arquivos TJSP e CJF já arquivados.
