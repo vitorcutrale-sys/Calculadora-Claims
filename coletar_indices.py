@@ -1,16 +1,18 @@
 """
-Entry point da coleta diária de índices (BACEN + TJSP).
+Entry point da coleta mensal de índices (BACEN + TJSP + CJF).
 
 Uso:
-    python coletar_indices.py                   # auto (BACEN + TJSP)
-    python coletar_indices.py --completo        # força recarga histórica BACEN
-    python coletar_indices.py --incremental     # força incremental BACEN
-    python coletar_indices.py --so-bacen        # roda apenas BACEN
-    python coletar_indices.py --so-tjsp         # roda apenas TJSP
-    python coletar_indices.py --resumo          # apenas imprime resumo do banco
+    python coletar_indices.py                          # auto (BACEN + TJSP + CJF)
+    python coletar_indices.py --completo               # força recarga histórica BACEN
+    python coletar_indices.py --incremental            # força incremental BACEN
+    python coletar_indices.py --so-bacen               # roda apenas BACEN
+    python coletar_indices.py --so-tjsp                # roda apenas TJSP
+    python coletar_indices.py --so-cjf                 # roda apenas CJF
+    python coletar_indices.py --so-cjf --mes 5 --ano 2025  # CJF para mês/ano específico
+    python coletar_indices.py --resumo                 # apenas imprime resumo do banco
 
-O modo padrão executa BACEN (auto) seguido de TJSP. Falha em uma
-fonte não interrompe a outra.
+O modo padrão executa BACEN (auto) seguido de TJSP e CJF. Falha em uma
+fonte não interrompe as demais.
 
 Logs são gravados em /logs/coleta_AAAA-MM-DD.log e também impressos
 no console.
@@ -47,6 +49,7 @@ def imprimir_resumo() -> None:
         db.sincronizar_todas_series(conn)
         linhas_bacen = db.resumo(conn)
         linhas_tjsp = db.resumo_tjsp(conn)
+        linhas_cjf = db.resumo_cjf(conn)
 
     print("\n=== Resumo do banco de índices (BACEN) ===")
     print(
@@ -67,6 +70,16 @@ def imprimir_resumo() -> None:
         for r in linhas_tjsp:
             print(
                 f"{r['tabela_chave']:<24} | {r['n_fatores']:>8} | "
+                f"{r['primeiro_ano']:>7} | {r['ultimo_ano']:>8}"
+            )
+
+    if linhas_cjf:
+        print("\n=== Resumo das Tabelas CJF ===")
+        print(f"{'Tabela':<16} | {'Fatores':>8} | {'1º ano':>7} | {'Últ. ano':>8}")
+        print("-" * 52)
+        for r in linhas_cjf:
+            print(
+                f"{r['tabela_chave']:<16} | {r['n_fatores']:>8} | "
                 f"{r['primeiro_ano']:>7} | {r['ultimo_ano']:>8}"
             )
 
@@ -104,6 +117,26 @@ def main() -> int:
         "--so-tjsp",
         action="store_true",
         help="Roda apenas a coleta do TJSP.",
+    )
+    grupo_fonte.add_argument(
+        "--so-cjf",
+        action="store_true",
+        help="Roda apenas a coleta do CJF (Justiça Federal).",
+    )
+
+    parser.add_argument(
+        "--mes",
+        type=int,
+        default=0,
+        metavar="MM",
+        help="Mês de referência para coleta CJF (padrão: mês corrente).",
+    )
+    parser.add_argument(
+        "--ano",
+        type=int,
+        default=0,
+        metavar="AAAA",
+        help="Ano de referência para coleta CJF (padrão: ano corrente).",
     )
 
     args = parser.parse_args()
@@ -143,11 +176,26 @@ def main() -> int:
             logger.info("BACEN status: %s | %s", estat["status"], estat["mensagem"])
             if estat["status"] != "success":
                 exit_code = 1
+        elif args.so_cjf:
+            logger.info(
+                "Modo: apenas CJF (mes=%s, ano=%s)",
+                args.mes or "corrente", args.ano or "corrente",
+            )
+            estat_cjf = coletor.coletar_cjf(mes=args.mes, ano=args.ano)
+            logger.info(
+                "CJF: %d tabelas, %d novas versões, %d fatores atualizados.",
+                estat_cjf["tabelas_processadas"],
+                estat_cjf["tabelas_novas_versoes"],
+                estat_cjf["fatores_atualizados"],
+            )
+            if estat_cjf["tabelas_com_erro"] > 0:
+                exit_code = 1
         else:
-            logger.info("Modo: BACEN (%s) + TJSP", modo_bacen)
+            logger.info("Modo: BACEN (%s) + TJSP + CJF", modo_bacen)
             estat_full = coletor.coletar_tudo(modo_bacen=modo_bacen)
             b = estat_full["bacen"]
             t = estat_full["tjsp"]
+            c = estat_full["cjf"]
             logger.info("BACEN status: %s | %s", b.get("status"), b.get("mensagem"))
             logger.info(
                 "TJSP: %d tabelas, %d novas versões, %d fatores atualizados.",
@@ -155,7 +203,13 @@ def main() -> int:
                 t["tabelas_novas_versoes"],
                 t["fatores_atualizados"],
             )
-            if b.get("status") != "success" or t["tabelas_com_erro"] > 0:
+            logger.info(
+                "CJF: %d tabelas, %d novas versões, %d fatores atualizados.",
+                c["tabelas_processadas"],
+                c["tabelas_novas_versoes"],
+                c["fatores_atualizados"],
+            )
+            if b.get("status") != "success" or t["tabelas_com_erro"] > 0 or c["tabelas_com_erro"] > 0:
                 exit_code = 1
     except Exception:
         logger.exception("Erro fatal na coleta.")

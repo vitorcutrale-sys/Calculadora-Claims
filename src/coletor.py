@@ -13,9 +13,9 @@ Estratégia:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
-from . import bacen, config, db, tjsp
+from . import bacen, cjf, config, db, tjsp
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +201,90 @@ def coletar_tjsp() -> dict:
 
 
 # ------------------------------------------------------------------ #
+# Coleta CJF                                                          #
+# ------------------------------------------------------------------ #
+def coletar_cjf(mes: int = 0, ano: int = 0) -> dict:
+    """
+    Baixa cada tabela CJF configurada em config.CJF_TABELAS para o
+    mês/ano informado (padrão: mês e ano correntes).
+
+    Usa SHA-256 para detectar mudanças e evitar reprocessamento.
+
+    Retorna estatísticas: tabelas processadas, novas versões, fatores
+    atualizados, erros.
+    """
+    db.inicializar_schema()
+
+    hoje = date.today()
+    mes_ref = mes or hoje.month
+    ano_ref = ano or hoje.year
+
+    estatisticas = {
+        "mes_referencia": mes_ref,
+        "ano_referencia": ano_ref,
+        "tabelas_processadas": 0,
+        "tabelas_novas_versoes": 0,
+        "tabelas_inalteradas": 0,
+        "fatores_atualizados": 0,
+        "tabelas_com_erro": 0,
+        "erros": [],
+    }
+
+    for chave, meta in config.CJF_TABELAS.items():
+        try:
+            with db.conectar() as conn:
+                sha_anterior = db.ultimo_sha256_cjf(conn, chave)
+
+            resultado = cjf.coletar_tabela(
+                tabela_chave=chave,
+                tipo_tabela=meta["tipo_tabela"],
+                seq_encadeamento=meta["seq_encadeamento"],
+                mes_referencia=mes_ref,
+                ano_referencia=ano_ref,
+                sha256_anterior=sha_anterior,
+            )
+
+            estatisticas["tabelas_processadas"] += 1
+
+            if not resultado.mudou:
+                estatisticas["tabelas_inalteradas"] += 1
+                logger.info("CJF %s: sem mudança desde a última coleta.", chave)
+                continue
+
+            with db.conectar() as conn:
+                pub_id = db.registrar_publicacao_cjf(
+                    conn,
+                    tabela_chave=chave,
+                    tipo_tabela=resultado.tipo_tabela,
+                    seq_encadeamento=resultado.seq_encadeamento,
+                    mes_referencia=resultado.mes_referencia,
+                    ano_referencia=resultado.ano_referencia,
+                    sha256=resultado.sha256,
+                    caminho_arquivo=str(resultado.caminho_arquivo),
+                )
+                afetadas = db.upsert_fatores_cjf(
+                    conn,
+                    tabela_chave=chave,
+                    publicacao_id=pub_id,
+                    fatores=resultado.fatores,
+                )
+
+            estatisticas["tabelas_novas_versoes"] += 1
+            estatisticas["fatores_atualizados"] += afetadas
+            logger.info(
+                "CJF %s: %d fatores atualizados (publicação %d).",
+                chave, afetadas, pub_id,
+            )
+
+        except Exception as e:
+            logger.exception("Falha ao processar tabela CJF %s.", chave)
+            estatisticas["tabelas_com_erro"] += 1
+            estatisticas["erros"].append(f"{chave}: {e}")
+
+    return estatisticas
+
+
+# ------------------------------------------------------------------ #
 # Coleta unificada (BACEN + TJSP)                                     #
 # ------------------------------------------------------------------ #
 def coletar_tudo(modo_bacen: str = "auto") -> dict:
@@ -235,7 +319,21 @@ def coletar_tudo(modo_bacen: str = "auto") -> dict:
             "erros": [str(e)],
         }
 
+    logger.info("--- Coleta CJF ---")
+    try:
+        cjf_stats = coletar_cjf()
+    except Exception as e:
+        logger.exception("Erro fatal na coleta CJF.")
+        cjf_stats = {
+            "tabelas_processadas": 0,
+            "tabelas_novas_versoes": 0,
+            "fatores_atualizados": 0,
+            "tabelas_com_erro": 1,
+            "erros": [str(e)],
+        }
+
     return {
         "bacen": bacen_stats,
         "tjsp": tjsp_stats,
+        "cjf": cjf_stats,
     }

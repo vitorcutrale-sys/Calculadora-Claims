@@ -102,6 +102,40 @@ CREATE TABLE IF NOT EXISTS tjsp_fatores (
 
 CREATE INDEX IF NOT EXISTS idx_tjsp_fatores_anomes
     ON tjsp_fatores(tabela_chave, ano, mes);
+
+-- ---------------------------------------------------------------- --
+-- Tabelas CJF (SICOM - Correção Monetária)                         --
+-- ---------------------------------------------------------------- --
+-- Registra cada download do SICOM. Hash SHA-256 evita reprocessamento.
+CREATE TABLE IF NOT EXISTS cjf_publicacoes (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    tabela_chave        TEXT NOT NULL,   -- ex.: "TCM_3", "VHI_2"
+    tipo_tabela         TEXT NOT NULL,   -- "TCM" ou "VHI"
+    seq_encadeamento    INTEGER NOT NULL,-- 1..6
+    mes_referencia      INTEGER NOT NULL,-- mês da tabela (1..12)
+    ano_referencia      INTEGER NOT NULL,-- ano da tabela
+    data_download       TEXT NOT NULL,
+    sha256              TEXT NOT NULL,
+    caminho_arquivo     TEXT NOT NULL,
+    UNIQUE (tabela_chave, sha256)
+);
+
+-- Coeficientes/valores extraídos da publicação mais recente.
+-- UNIQUE(tabela_chave, ano, mes) garante upsert idempotente.
+CREATE TABLE IF NOT EXISTS cjf_fatores (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    tabela_chave        TEXT NOT NULL,
+    ano                 INTEGER NOT NULL,
+    mes                 INTEGER NOT NULL,   -- 1..12
+    valor               REAL NOT NULL,
+    publicacao_id       INTEGER NOT NULL,
+    atualizado_em       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (tabela_chave, ano, mes),
+    FOREIGN KEY (publicacao_id) REFERENCES cjf_publicacoes(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cjf_fatores_anomes
+    ON cjf_fatores(tabela_chave, ano, mes);
 """
 
 
@@ -341,6 +375,101 @@ def resumo_tjsp(conn: sqlite3.Connection) -> list[sqlite3.Row]:
             MIN(ano)        AS primeiro_ano,
             MAX(ano)        AS ultimo_ano
         FROM tjsp_fatores
+        GROUP BY tabela_chave
+        ORDER BY tabela_chave
+        """
+    )
+    return cur.fetchall()
+
+
+# ------------------------------------------------------------------ #
+# CJF                                                                 #
+# ------------------------------------------------------------------ #
+def ultimo_sha256_cjf(
+    conn: sqlite3.Connection, tabela_chave: str
+) -> Optional[str]:
+    """SHA-256 da publicação CJF mais recente para essa chave."""
+    cur = conn.execute(
+        """
+        SELECT sha256 FROM cjf_publicacoes
+         WHERE tabela_chave = ?
+         ORDER BY id DESC LIMIT 1
+        """,
+        (tabela_chave,),
+    )
+    row = cur.fetchone()
+    return row["sha256"] if row else None
+
+
+def registrar_publicacao_cjf(
+    conn: sqlite3.Connection,
+    tabela_chave: str,
+    tipo_tabela: str,
+    seq_encadeamento: int,
+    mes_referencia: int,
+    ano_referencia: int,
+    sha256: str,
+    caminho_arquivo: str,
+) -> int:
+    """Insere registro de publicação CJF e retorna seu id."""
+    cur = conn.execute(
+        """
+        INSERT INTO cjf_publicacoes
+            (tabela_chave, tipo_tabela, seq_encadeamento,
+             mes_referencia, ano_referencia, data_download, sha256, caminho_arquivo)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            tabela_chave,
+            tipo_tabela,
+            seq_encadeamento,
+            mes_referencia,
+            ano_referencia,
+            datetime.now().isoformat(timespec="seconds"),
+            sha256,
+            caminho_arquivo,
+        ),
+    )
+    return cur.lastrowid
+
+
+def upsert_fatores_cjf(
+    conn: sqlite3.Connection,
+    tabela_chave: str,
+    publicacao_id: int,
+    fatores: Iterable[tuple[int, int, float]],
+) -> int:
+    """Insere ou atualiza fatores CJF (ano, mes, valor). Retorna linhas afetadas."""
+    afetadas = 0
+    for ano, mes, valor in fatores:
+        cur = conn.execute(
+            """
+            INSERT INTO cjf_fatores
+                (tabela_chave, ano, mes, valor, publicacao_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(tabela_chave, ano, mes) DO UPDATE SET
+                valor         = excluded.valor,
+                publicacao_id = excluded.publicacao_id,
+                atualizado_em = datetime('now')
+            WHERE cjf_fatores.valor != excluded.valor
+            """,
+            (tabela_chave, ano, mes, valor, publicacao_id),
+        )
+        if cur.rowcount == 1:
+            afetadas += 1
+    return afetadas
+
+
+def resumo_cjf(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Resumo por tabela CJF: contagem, ano mínimo e máximo de fatores."""
+    cur = conn.execute(
+        """
+        SELECT
+            tabela_chave,
+            COUNT(*)        AS n_fatores,
+            MIN(ano)        AS primeiro_ano,
+            MAX(ano)        AS ultimo_ano
+        FROM cjf_fatores
         GROUP BY tabela_chave
         ORDER BY tabela_chave
         """

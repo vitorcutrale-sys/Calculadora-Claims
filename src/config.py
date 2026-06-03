@@ -28,6 +28,7 @@ LOG_DIR = BASE_DIR / "logs"
 # Pasta para arquivos de referência (PDFs de tabelas oficiais etc.)
 REFERENCIAS_DIR = BASE_DIR / "referencias"
 TJSP_REFERENCIAS_DIR = REFERENCIAS_DIR / "tjsp"
+CJF_REFERENCIAS_DIR = REFERENCIAS_DIR / "cjf"
 
 # ------------------------------------------------------------------ #
 # Catálogo de séries do BACEN SGS                                     #
@@ -156,4 +157,52 @@ TJSP_TABELAS = {
             "desde 12/2021)."
         ),
     },
+}
+
+# ------------------------------------------------------------------ #
+# Parâmetros do CJF (Tabelas de Correção Monetária - SICOM)          #
+# ------------------------------------------------------------------ #
+# Referência: https://sicom.cjf.jus.br/tabelaCorMor.php
+#
+# Campos do formulário:
+#   tipoTabela      : "TCM" (Tabela de Correção Monetária)
+#                     "VHI" (Valores Históricos dos Indexadores)
+#   seqEncadeamento : identificador do tipo de ação judicial
+#
+# A tabela solicitada reflete sempre a data de referência (mes/ano)
+# mais recente informada. Para coleta mensal automatizada, usamos o
+# mês corrente.
+#
+# Chave do dicionário: "{tipoTabela}_{seqEncadeamento}" — usada como
+# identificador único nas tabelas do banco e no nome dos arquivos.
+
+CJF_FORM_URL = "https://sicom.cjf.jus.br/tabelaCorMor.php"
+
+# Tipos de ação (seqEncadeamento) disponíveis no SICOM
+CJF_SEQ_ENCADEAMENTO = {
+    1: "Desapropriações",
+    2: "Benefício Previdenciário",
+    3: "Ações Condenatórias em Geral (servidores e empregados públicos)",
+    4: "Repetição de Indébito Tributário",
+    5: "Ações Condenatórias em Geral (Devedor Fazenda Pública)",
+    6: "Ações Condenatórias em Geral (devedor não enquadrado como Fazenda Pública)",
+}
+
+# Catálogo de combinações (tipoTabela × seqEncadeamento) a coletar.
+# Adicione ou remova entradas conforme a necessidade do escritório.
+CJF_TABELAS = {
+    # TCM — coeficientes de atualização direta (uso mais comum em cálculos)
+    "TCM_1": {"tipo_tabela": "TCM", "seq_encadeamento": 1, "nome": "TCM - Desapropriações"},
+    "TCM_2": {"tipo_tabela": "TCM", "seq_encadeamento": 2, "nome": "TCM - Benefício Previdenciário"},
+    "TCM_3": {"tipo_tabela": "TCM", "seq_encadeamento": 3, "nome": "TCM - Ações Condenatórias (servidores)"},
+    "TCM_4": {"tipo_tabela": "TCM", "seq_encadeamento": 4, "nome": "TCM - Repetição de Indébito Tributário"},
+    "TCM_5": {"tipo_tabela": "TCM", "seq_encadeamento": 5, "nome": "TCM - Ações Condenatórias (Fazenda Pública)"},
+    "TCM_6": {"tipo_tabela": "TCM", "seq_encadeamento": 6, "nome": "TCM - Ações Condenatórias (devedor comum)"},
+    # VHI — valores históricos dos indexadores (ORTN, OTN, BTN, etc.)
+    "VHI_1": {"tipo_tabela": "VHI", "seq_encadeamento": 1, "nome": "VHI - Desapropriações"},
+    "VHI_2": {"tipo_tabela": "VHI", "seq_encadeamento": 2, "nome": "VHI - Benefício Previdenciário"},
+    "VHI_3": {"tipo_tabela": "VHI", "seq_encadeamento": 3, "nome": "VHI - Ações Condenatórias (servidores)"},
+    "VHI_4": {"tipo_tabela": "VHI", "seq_encadeamento": 4, "nome": "VHI - Repetição de Indébito Tributário"},
+    "VHI_5": {"tipo_tabela": "VHI", "seq_encadeamento": 5, "nome": "VHI - Ações Condenatórias (Fazenda Pública)"},
+    "VHI_6": {"tipo_tabela": "VHI", "seq_encadeamento": 6, "nome": "VHI - Ações Condenatórias (devedor comum)"},
 }
