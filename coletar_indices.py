@@ -9,6 +9,8 @@ Uso:
     python coletar_indices.py --so-tjsp                # roda apenas TJSP
     python coletar_indices.py --so-cjf                 # roda apenas CJF
     python coletar_indices.py --so-cjf --mes 5 --ano 2025  # CJF para mês/ano específico
+    python coletar_indices.py --importar-juros          # importa tabelas de juros de mora (estático)
+    python coletar_indices.py --importar-juros --origem "C:\\caminho\\dos\\pdfs"  # origem custom
     python coletar_indices.py --resumo                 # apenas imprime resumo do banco
 
 O modo padrão executa BACEN (auto) seguido de TJSP e CJF. Falha em uma
@@ -50,6 +52,7 @@ def imprimir_resumo() -> None:
         linhas_bacen = db.resumo(conn)
         linhas_tjsp = db.resumo_tjsp(conn)
         linhas_cjf = db.resumo_cjf(conn)
+        linhas_juros = db.resumo_juros(conn)
 
     print("\n=== Resumo do banco de índices (BACEN) ===")
     print(
@@ -80,6 +83,16 @@ def imprimir_resumo() -> None:
         for r in linhas_cjf:
             print(
                 f"{r['tabela_chave']:<16} | {r['n_fatores']:>8} | "
+                f"{r['primeiro_ano']:>7} | {r['ultimo_ano']:>8}"
+            )
+
+    if linhas_juros:
+        print("\n=== Resumo das Tabelas de Juros de Mora ===")
+        print(f"{'Tabela':<22} | {'Taxas':>8} | {'1º ano':>7} | {'Últ. ano':>8}")
+        print("-" * 56)
+        for r in linhas_juros:
+            print(
+                f"{r['tabela_chave']:<22} | {r['n_fatores']:>8} | "
                 f"{r['primeiro_ano']:>7} | {r['ultimo_ano']:>8}"
             )
 
@@ -123,6 +136,11 @@ def main() -> int:
         action="store_true",
         help="Roda apenas a coleta do CJF (Justiça Federal).",
     )
+    grupo_fonte.add_argument(
+        "--importar-juros",
+        action="store_true",
+        help="Importa as tabelas de juros de mora (estático, a partir de PDFs locais).",
+    )
 
     parser.add_argument(
         "--mes",
@@ -137,6 +155,16 @@ def main() -> int:
         default=0,
         metavar="AAAA",
         help="Ano de referência para coleta CJF (padrão: ano corrente).",
+    )
+    parser.add_argument(
+        "--origem",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Pasta de origem dos PDFs para --importar-juros "
+            "(padrão: referencias/juros/)."
+        ),
     )
 
     args = parser.parse_args()
@@ -189,6 +217,23 @@ def main() -> int:
                 estat_cjf["fatores_atualizados"],
             )
             if estat_cjf["tabelas_com_erro"] > 0:
+                exit_code = 1
+        elif args.importar_juros:
+            logger.info(
+                "Modo: importação de juros de mora (origem=%s)",
+                args.origem or "referencias/juros/",
+            )
+            estat_juros = coletor.importar_juros(origem_dir=args.origem)
+            logger.info(
+                "JUROS: %d tabelas, %d novas versões, %d taxas importadas (origem: %s).",
+                estat_juros["tabelas_processadas"],
+                estat_juros["tabelas_novas_versoes"],
+                estat_juros["taxas_importadas"],
+                estat_juros["origem"],
+            )
+            if estat_juros["tabelas_com_erro"] > 0:
+                for err in estat_juros["erros"]:
+                    logger.error("JUROS erro: %s", err)
                 exit_code = 1
         else:
             logger.info("Modo: BACEN (%s) + TJSP + CJF", modo_bacen)

@@ -1,10 +1,11 @@
 # Calculadora de Claims — Coleta de Índices
 
-Projeto para construir a base de dados de índices econômicos aplicáveis a precatórios, alimentada por **três fontes oficiais**:
+Projeto para construir a base de dados de índices econômicos aplicáveis a precatórios, alimentada por **três fontes oficiais** de coleta periódica, mais uma **base histórica estática** de juros de mora:
 
 - **BACEN SGS** — séries diárias/mensais de IPCA, IGP-DI, IGP-M, Selic, CDI, TR, IPCA-E e Poupança, via API JSON.
 - **TJSP — Tabelas Práticas** — PDFs oficiais com fatores acumulados de atualização monetária (atualmente, a Tabela da EC 113/2021).
 - **CJF — SICOM** — Tabelas de Correção Monetária e Valores Históricos dos Indexadores do Conselho da Justiça Federal, para as 6 categorias de ação judicial, via formulário web mensal.
+- **Juros de Mora (estático)** — Tabelas históricas de juros de mora em condenações da Fazenda Pública (Servidores, Não Tributário e Tributário), importadas uma única vez a partir de PDFs locais. **Sem coleta periódica**: os juros deixaram de ser aplicados em 09/12/2021 (art. 3º da EC 113/2021).
 
 O script Python baixa, persiste e mantém atualizado tudo em SQLite local, com auditoria por hash de cada versão dos arquivos baixados.
 
@@ -21,19 +22,22 @@ Calculadora-Claims/
 ├── agendar_cjf_mensal.bat       Registra a rotina mensal CJF no Task Scheduler
 ├── README.md                    Este arquivo
 ├── src/
-│   ├── config.py                Caminhos, séries BACEN, tabelas TJSP e CJF
+│   ├── config.py                Caminhos, séries BACEN, tabelas TJSP, CJF e Juros
 │   ├── bacen.py                 Cliente HTTP da API SGS (BACEN)
 │   ├── tjsp.py                  Download + parser das tabelas TJSP (PDF)
 │   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
-│   ├── db.py                    Camada SQLite (BACEN + TJSP + CJF)
-│   └── coletor.py               Orquestrador (BACEN + TJSP + CJF)
+│   ├── juros.py                 Importador estático das tabelas de Juros de Mora (PDF)
+│   ├── db.py                    Camada SQLite (BACEN + TJSP + CJF + Juros)
+│   └── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
 ├── data/
 │   └── claims.db                Banco SQLite (criado na 1ª execução)
 ├── referencias/
 │   ├── tjsp/
 │   │   └── EC113_2021_AAAA-MM-DD_<hash>.pdf   Versões arquivadas dos PDFs TJSP
-│   └── cjf/
-│       └── TCM_3_AAAA-MM-DD_<hash>.xls        Versões arquivadas dos XLS CJF
+│   ├── cjf/
+│   │   └── TCM_3_AAAA-MM-DD_<hash>.xls        Versões arquivadas dos XLS CJF
+│   └── juros/
+│       └── JUROS_SERVIDOR_AAAA-MM-DD_<hash>.pdf  Cópias arquivadas dos PDFs de Juros
 └── logs/
     ├── coleta_AAAA-MM-DD.log    Logs diários do Python
     ├── agendador.log            Saída do wrapper diário
@@ -91,6 +95,29 @@ A coleta é **mensal** (as tabelas são publicadas uma vez por mês). O arquivo 
 
 Para adicionar ou remover combinações, edite o dicionário `CJF_TABELAS` em `src/config.py`.
 
+## Tabelas de Juros de Mora (base histórica estática)
+
+Tabelas de **juros de mora em condenações da Fazenda Pública** (precatórios), importadas a partir de PDFs locais. São dados **históricos e fechados**: os juros de mora deixaram de ser aplicados a partir de **09/12/2021** (art. 3º da EC 113/2021), então **não há coleta periódica** — a importação é feita uma única vez.
+
+| Chave                  | Categoria                                            | Arquivo de origem       |
+|------------------------|------------------------------------------------------|-------------------------|
+| `JUROS_SERVIDOR`       | Servidores e Empregados Públicos                     | `TaxaJuroServidor.pdf`  |
+| `JUROS_NAO_TRIBUTARIO` | Precatórios de Natureza Não Tributária               | `TaxaJuroGeral.pdf`     |
+| `JUROS_TRIBUTARIO`     | Precatórios Tributários                              | `TaxaJuroTributario.pdf`|
+
+Cada PDF é uma matriz **Ano × Mês** com a taxa de juros de mora **acumulada (em %)** daquele mês até a data de referência (dez/2021). Os valores embutem as mudanças de regime legal ao longo do tempo (0,5% a.m. do Código Civil de 1916, 1% a.m. do DL 2.322/1987 e da Lei 8.177/1991, poupança via Lei 11.960/2009 e EC 62/2009, etc.) — por isso são **extraídos fielmente, nunca recalculados**.
+
+O parser usa `pdfplumber.extract_tables()`, que preserva o **alinhamento por coluna** (essencial porque o ano inicial, 1964, é parcial: só tem out/nov/dez). Cada PDF é arquivado em `referencias/juros/` com SHA-256 no nome; reimportar uma versão idêntica não reprocessa nada.
+
+Para importar:
+
+```cmd
+python coletar_indices.py --importar-juros                          # origem padrão: referencias/juros/
+python coletar_indices.py --importar-juros --origem "C:\caminho\dos\pdfs"   # origem custom
+```
+
+Para adicionar ou remover tabelas, edite o dicionário `JUROS_TABELAS` em `src/config.py`.
+
 ## Pré-requisitos
 
 - Python 3.10 ou superior (verifique com `python --version`)
@@ -139,7 +166,10 @@ python coletar_indices.py --so-bacen           # roda apenas a coleta BACEN
 python coletar_indices.py --so-tjsp            # roda apenas a coleta TJSP
 python coletar_indices.py --so-cjf             # roda apenas a coleta CJF (mês corrente)
 python coletar_indices.py --so-cjf --mes 5 --ano 2025  # CJF para mês/ano específico
+python coletar_indices.py --importar-juros     # importa as tabelas de Juros de Mora (estático)
 ```
+
+> **Nota:** `--importar-juros` é uma operação estática e **não** faz parte da coleta padrão (`coletar_tudo`). Rode-a manualmente apenas quando precisar (re)importar os PDFs de juros.
 
 ## Agendar rotinas automáticas (Windows Task Scheduler)
 
@@ -260,6 +290,34 @@ Registra início, fim, status (`success` / `partial` / `error`), contagens e men
 
 `UNIQUE (tabela_chave, ano, mes)` — uma linha por mês/ano em cada tabela.
 
+**Tabela `juros_publicacoes`** — versões dos PDFs de Juros de Mora importados
+
+| coluna          | tipo    |
+|-----------------|---------|
+| id (PK)         | INTEGER |
+| tabela_chave    | TEXT (ex.: "JUROS_SERVIDOR") |
+| descricao       | TEXT    |
+| data_referencia | TEXT ("YYYY-MM": acumulado até) |
+| data_importacao | TEXT    |
+| sha256          | TEXT    |
+| caminho_arquivo | TEXT (path em referencias/juros/) |
+
+`UNIQUE (tabela_chave, sha256)` — mesma versão não duplica.
+
+**Tabela `juros_fatores`** — taxas de juros de mora acumuladas (em %)
+
+| coluna         | tipo    |
+|----------------|---------|
+| id (PK)        | INTEGER |
+| tabela_chave   | TEXT    |
+| ano            | INTEGER |
+| mes            | INTEGER (1..12) |
+| taxa           | REAL (% de juros de mora acumulado) |
+| publicacao_id  | INTEGER → juros_publicacoes.id |
+| atualizado_em  | TEXT    |
+
+`UNIQUE (tabela_chave, ano, mes)` — uma linha por mês/ano em cada tabela.
+
 ## Consultar o banco
 
 Você pode abrir `data/claims.db` em qualquer ferramenta SQLite. Recomendo:
@@ -293,7 +351,8 @@ Isso evita o acúmulo de erros de ponto flutuante em séries longas — fundamen
 1. ✅ Ingestão diária de índices BACEN (8 séries)
 2. ✅ Ingestão de Tabelas Práticas do TJSP (EC 113/2021)
 3. ✅ Ingestão mensal das Tabelas CJF — SICOM (TCM + VHI × 6 categorias)
-4. ⏭️ Motor de cálculo de fatores acumulados entre datas (BACEN, TJSP e CJF)
-5. ⏭️ Importação da planilha-protótipo de cálculos
-6. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
-7. ⏭️ Definir usuários finais e segurança/auditoria
+4. ✅ Importação estática das Tabelas de Juros de Mora (3 categorias, base histórica)
+5. ⏭️ Motor de cálculo de fatores acumulados entre datas (BACEN, TJSP, CJF e Juros)
+6. ⏭️ Importação da planilha-protótipo de cálculos
+7. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
+8. ⏭️ Definir usuários finais e segurança/auditoria

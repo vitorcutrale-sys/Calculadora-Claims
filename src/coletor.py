@@ -15,7 +15,10 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta
 
-from . import bacen, cjf, config, db, tjsp
+from pathlib import Path
+from typing import Optional
+
+from . import bacen, cjf, config, db, juros, tjsp
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +281,85 @@ def coletar_cjf(mes: int = 0, ano: int = 0) -> dict:
 
         except Exception as e:
             logger.exception("Falha ao processar tabela CJF %s.", chave)
+            estatisticas["tabelas_com_erro"] += 1
+            estatisticas["erros"].append(f"{chave}: {e}")
+
+    return estatisticas
+
+
+# ------------------------------------------------------------------ #
+# Importação de Juros de Mora (estática / única)                      #
+# ------------------------------------------------------------------ #
+def importar_juros(origem_dir: Optional[Path] = None) -> dict:
+    """
+    Importa as tabelas de juros de mora configuradas em
+    config.JUROS_TABELAS a partir de PDFs locais.
+
+    `origem_dir` é a pasta onde estão os PDFs de origem. Se None, usa
+    config.JUROS_FONTE_DIR. Cada PDF é arquivado em referencias/juros/
+    com hash no nome; SHA-256 evita reimportar versão idêntica.
+
+    Esta importação é ESTÁTICA (sem coleta periódica): os juros de mora
+    deixaram de ser aplicados em 09/12/2021 (EC 113/2021). Por isso ela
+    NÃO faz parte de coletar_tudo().
+    """
+    db.inicializar_schema()
+
+    origem = Path(origem_dir) if origem_dir else config.JUROS_FONTE_DIR
+
+    estatisticas = {
+        "origem": str(origem),
+        "tabelas_processadas": 0,
+        "tabelas_novas_versoes": 0,
+        "tabelas_inalteradas": 0,
+        "taxas_importadas": 0,
+        "tabelas_com_erro": 0,
+        "erros": [],
+    }
+
+    for chave, meta in config.JUROS_TABELAS.items():
+        try:
+            with db.conectar() as conn:
+                sha_anterior = db.ultimo_sha256_juros(conn, chave)
+
+            resultado = juros.importar_tabela(
+                tabela_chave=chave,
+                arquivo_origem=origem / meta["arquivo_origem"],
+                sha256_anterior=sha_anterior,
+            )
+
+            estatisticas["tabelas_processadas"] += 1
+
+            if not resultado.mudou:
+                estatisticas["tabelas_inalteradas"] += 1
+                logger.info("JUROS %s: sem mudança desde a última importação.", chave)
+                continue
+
+            with db.conectar() as conn:
+                pub_id = db.registrar_publicacao_juros(
+                    conn,
+                    tabela_chave=chave,
+                    descricao=meta["descricao"],
+                    data_referencia=meta["data_referencia"],
+                    sha256=resultado.sha256,
+                    caminho_arquivo=str(resultado.caminho_arquivo),
+                )
+                afetadas = db.upsert_fatores_juros(
+                    conn,
+                    tabela_chave=chave,
+                    publicacao_id=pub_id,
+                    taxas=resultado.taxas,
+                )
+
+            estatisticas["tabelas_novas_versoes"] += 1
+            estatisticas["taxas_importadas"] += afetadas
+            logger.info(
+                "JUROS %s: %d taxas importadas (publicação %d).",
+                chave, afetadas, pub_id,
+            )
+
+        except Exception as e:
+            logger.exception("Falha ao importar tabela de juros %s.", chave)
             estatisticas["tabelas_com_erro"] += 1
             estatisticas["erros"].append(f"{chave}: {e}")
 

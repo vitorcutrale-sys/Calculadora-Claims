@@ -29,6 +29,7 @@ LOG_DIR = BASE_DIR / "logs"
 REFERENCIAS_DIR = BASE_DIR / "referencias"
 TJSP_REFERENCIAS_DIR = REFERENCIAS_DIR / "tjsp"
 CJF_REFERENCIAS_DIR = REFERENCIAS_DIR / "cjf"
+JUROS_REFERENCIAS_DIR = REFERENCIAS_DIR / "juros"
 
 # ------------------------------------------------------------------ #
 # Catálogo de séries do BACEN SGS                                     #
@@ -205,4 +206,69 @@ CJF_TABELAS = {
     "VHI_4": {"tipo_tabela": "VHI", "seq_encadeamento": 4, "nome": "VHI - Repetição de Indébito Tributário"},
     "VHI_5": {"tipo_tabela": "VHI", "seq_encadeamento": 5, "nome": "VHI - Ações Condenatórias (Fazenda Pública)"},
     "VHI_6": {"tipo_tabela": "VHI", "seq_encadeamento": 6, "nome": "VHI - Ações Condenatórias (devedor comum)"},
+}
+
+# ------------------------------------------------------------------ #
+# Parâmetros das Tabelas de Juros de Mora (importação ESTÁTICA)       #
+# ------------------------------------------------------------------ #
+# Tabelas de Juros de Mora em Condenações da Fazenda Pública (precatórios).
+#
+# Diferente do BACEN/TJSP/CJF, estes dados NÃO têm coleta periódica:
+# os juros de mora deixaram de ser aplicados a partir de 09/12/2021
+# (art. 3º da EC 113/2021). As tabelas são, portanto, HISTÓRICAS e
+# fechadas — importadas uma única vez a partir de PDFs locais.
+#
+# Cada PDF é uma matriz Ano × Mês com a taxa de juros de mora ACUMULADA
+# (em %) daquele mês até a data de referência (dez/2021). Os valores
+# embutem as mudanças de regime legal ao longo do tempo (0,5% a.m. do
+# Código Civil de 1916, 1% a.m. do DL 2.322/1987 e Lei 8.177/1991,
+# poupança via Lei 11.960/2009 e EC 62/2009, etc.) — por isso devem ser
+# EXTRAÍDOS fielmente, nunca recalculados.
+#
+# Campos:
+#   nome            : descrição curta para relatórios
+#   arquivo_origem  : nome do PDF de origem (procurado em --origem)
+#   data_referencia : "YYYY-MM" até onde os juros estão acumulados
+#   descricao       : descrição longa / categoria
+#
+# A pasta de ORIGEM dos PDFs é informada via --origem na linha de comando.
+# Por padrão, o importador procura na própria pasta de arquivamento
+# (referencias/juros/), para que reimportações sejam reprodutíveis a
+# partir das cópias já versionadas.
+JUROS_FONTE_DIR = JUROS_REFERENCIAS_DIR
+
+# Data de referência comum a todas as tabelas (acumulado até este mês).
+JUROS_DATA_REFERENCIA = "2021-12"
+
+JUROS_TABELAS = {
+    "JUROS_SERVIDOR": {
+        "nome": "Juros de Mora — Servidores e Empregados Públicos",
+        "arquivo_origem": "TaxaJuroServidor.pdf",
+        "data_referencia": JUROS_DATA_REFERENCIA,
+        "descricao": (
+            "Taxas de juros de mora acumuladas para precatórios de servidores "
+            "e empregados públicos (condenações da Fazenda Pública). Acumulado "
+            "até dez/2021; sem juros de mora após 09/12/2021 (art. 3º EC 113/2021)."
+        ),
+    },
+    "JUROS_NAO_TRIBUTARIO": {
+        "nome": "Juros de Mora — Precatórios de Natureza Não Tributária",
+        "arquivo_origem": "TaxaJuroGeral.pdf",
+        "data_referencia": JUROS_DATA_REFERENCIA,
+        "descricao": (
+            "Taxas de juros de mora acumuladas para precatórios de natureza não "
+            "tributária (condenações da Fazenda Pública). Acumulado até dez/2021; "
+            "sem juros de mora após 09/12/2021 (art. 3º EC 113/2021)."
+        ),
+    },
+    "JUROS_TRIBUTARIO": {
+        "nome": "Juros de Mora — Precatórios Tributários",
+        "arquivo_origem": "TaxaJuroTributario.pdf",
+        "data_referencia": JUROS_DATA_REFERENCIA,
+        "descricao": (
+            "Taxas de juros de mora acumuladas para precatórios tributários "
+            "(condenações da Fazenda Pública). Acumulado até dez/2021; sem juros "
+            "de mora após 09/12/2021 (art. 3º EC 113/2021)."
+        ),
+    },
 }

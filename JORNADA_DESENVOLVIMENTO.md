@@ -2,7 +2,7 @@
 
 Este documento é o registro narrativo do que foi construído, por que foi construído daquela forma, e o que aprendemos ao longo do caminho. Diferente do `README.md` (que documenta o **estado atual** do projeto para quem chega novo), este arquivo conta a **história** do desenvolvimento.
 
-Última atualização: **2026-06-03**.
+Última atualização: **2026-06-08**.
 
 ---
 
@@ -15,8 +15,9 @@ Este documento é o registro narrativo do que foi construído, por que foi const
 5. [Agendamento via Windows Task Scheduler](#5-agendamento-via-windows-task-scheduler)
 6. [Fase 2 — Ingestão das Tabelas Práticas do TJSP](#6-fase-2--ingestão-das-tabelas-práticas-do-tjsp)
 7. [Fase 3 — Ingestão das Tabelas CJF (Justiça Federal)](#7-fase-3--ingestão-das-tabelas-cjf-justiça-federal)
-8. [Estado atual do projeto](#8-estado-atual-do-projeto)
-9. [Próximas fases](#9-próximas-fases)
+8. [Fase 4 — Importação das Tabelas de Juros de Mora](#8-fase-4--importação-das-tabelas-de-juros-de-mora)
+9. [Estado atual do projeto](#9-estado-atual-do-projeto)
+10. [Próximas fases](#10-próximas-fases)
 
 ---
 
@@ -281,7 +282,39 @@ Duas novas tabelas, seguindo o mesmo padrão do TJSP:
 
 O `coletor.py` ganhou `coletar_cjf(mes, ano)` e `coletar_tudo()` passou a incluir CJF após BACEN e TJSP. O `coletar_indices.py` ganhou os flags `--so-cjf`, `--mes` e `--ano`.
 
-## 8. Estado atual do projeto
+## 8. Fase 4 — Importação das Tabelas de Juros de Mora
+
+A quarta fonte tem uma natureza diferente das três anteriores: são as **tabelas de juros de mora em condenações da Fazenda Pública** (precatórios). Vieram de PDFs de um projeto interno (Tocantins), em três categorias: **Servidores e Empregados Públicos**, **Natureza Não Tributária** e **Tributários**.
+
+### A decisão-chave: importação estática, não coleta periódica
+
+O ponto que definiu toda a abordagem: **os juros de mora deixaram de existir em 09/12/2021** (art. 3º da EC 113/2021, que passou a aplicar apenas a Selic isolada). As tabelas são, portanto, **históricas e fechadas** — não há nada novo para coletar mês a mês. Diferente de BACEN/TJSP/CJF, não faz sentido agendar. A importação é feita **uma única vez** a partir de PDFs locais, e por isso `importar_juros()` ficou de fora do `coletar_tudo()`.
+
+### O que as tabelas contêm
+
+Cada PDF é uma matriz Ano × Mês com a **taxa de juros de mora acumulada (em %)** daquele mês até dez/2021. O valor de out/1964 (~418% na tabela de servidores) representa todos os juros acumulados de 1964 até 2021; dez/2021 = 0%. Os rodapés dos PDFs foram reveladores: os valores **embutem várias mudanças de regime legal** ao longo do tempo:
+
+- 0,5% a.m. — Código Civil de 1916 (10/1964 a 26/02/1987)
+- 1% a.m. — DL 2.322/1987 e Lei 8.177/1991 (27/02/1987 a 23/08/2001)
+- 0,5% a.m. — MP 2.180-35/2001 (24/08/2001 a 29/06/2009)
+- juros da poupança — Lei 11.960/2009 e EC 62/2009 (30/06/2009 a 08/12/2021)
+- zero — a partir de 09/12/2021 (EC 113/2021)
+
+Por isso a regra de ouro: as taxas são **extraídas fielmente, nunca recalculadas**. Tentar reproduzir os juros por fórmula seria reimplementar duas décadas de jurisprudência e legislação.
+
+### A lição de parsing: alinhamento por coluna
+
+O parser do TJSP (Fase 2) lê o texto da página e pega os 12 primeiros números como jan–dez. Isso **quebraria** aqui, porque o ano inicial (1964) é parcial — só tem out/nov/dez. Lendo o texto puro, "418,2689" cairia em **janeiro**, quando na verdade é **outubro**.
+
+A solução foi usar `pdfplumber.extract_tables()` em vez de `extract_text()`. O `extract_tables()` reconhece a grade da tabela e devolve cada célula na **coluna correta** — então out/1964 cai no índice de coluna 10, e jan–set ficam vazios. Validamos com sanity checks: set/1964 ausente, out/1964 = 418,2689%, a quebra de regime em 1987 (fev = 284,27 → abr = 282,77) e dez/2021 = 0%.
+
+A **lição genérica**: quando um PDF é genuinamente tabular e tem linhas/anos parciais, parsing posicional por coluna (`extract_tables`) é mais robusto que parsing sequencial por token (`extract_text` + regex). Cada técnica tem seu lugar — a do TJSP funciona porque lá os meses vazios vêm marcados com `::::::::::`; aqui as células simplesmente não existem.
+
+### Schema e integração
+
+Seguindo o padrão de TJSP/CJF, duas tabelas novas: `juros_publicacoes` (uma linha por PDF importado, com SHA-256 e data de referência) e `juros_fatores` (taxas em formato longo, coluna `taxa` em vez de `fator`/`valor` para deixar a semântica explícita). O módulo `src/juros.py` lê o PDF local (sem HTTP), arquiva uma cópia em `referencias/juros/` com hash no nome, parseia e persiste. O `coletar_indices.py` ganhou os flags `--importar-juros` e `--origem`.
+
+## 9. Estado atual do projeto
 
 ```
 Calculadora-Claims/
@@ -293,25 +326,27 @@ Calculadora-Claims/
 ├── README.md                    Documentação do estado atual
 ├── JORNADA_DESENVOLVIMENTO.md   (este arquivo)
 ├── src/
-│   ├── config.py                Caminhos, séries BACEN, tabelas TJSP e CJF
+│   ├── config.py                Caminhos, séries BACEN, tabelas TJSP, CJF e Juros
 │   ├── bacen.py                 Cliente HTTP da API SGS (BACEN)
 │   ├── tjsp.py                  Download + parser das tabelas TJSP (PDF)
 │   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
+│   ├── juros.py                 Importador estático das tabelas de Juros de Mora (PDF)
 │   ├── db.py                    Camada SQLite (schema completo + helpers)
-│   └── coletor.py               Orquestrador (BACEN + TJSP + CJF)
+│   └── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
 ├── data/
 │   └── claims.db                Banco SQLite com toda a base
 ├── referencias/
 │   ├── Tabela EC113.pdf         PDF original (validação manual)
 │   ├── tjsp/                    Versões arquivadas dos PDFs TJSP
-│   └── cjf/                     Versões arquivadas dos XLS CJF
+│   ├── cjf/                     Versões arquivadas dos XLS CJF
+│   └── juros/                   Cópias arquivadas dos PDFs de Juros de Mora
 └── logs/
     ├── coleta_AAAA-MM-DD.log    Logs estruturados do Python
     ├── agendador.log            Saída do wrapper diário
     └── agendador_cjf.log        Saída do wrapper mensal CJF
 ```
 
-**Schema SQLite** (7 tabelas):
+**Schema SQLite** (9 tabelas):
 
 | Tabela | Conteúdo |
 |--------|----------|
@@ -322,28 +357,32 @@ Calculadora-Claims/
 | `tjsp_fatores` | Fatores acumulados extraídos dos PDFs TJSP |
 | `cjf_publicacoes` | Histórico de XLS baixados do CJF (com SHA-256) |
 | `cjf_fatores` | Coeficientes/valores extraídos das tabelas CJF |
+| `juros_publicacoes` | PDFs de Juros de Mora importados (com SHA-256) |
+| `juros_fatores` | Taxas de juros de mora acumuladas (em %) — 3 categorias × 687 |
 
 **Dependências externas:**
-- `pdfplumber` (única) — para parsing dos PDFs TJSP; módulos BACEN e CJF usam apenas stdlib
+- `pdfplumber` (única) — para parsing dos PDFs TJSP e Juros de Mora; módulos BACEN e CJF usam apenas stdlib
 
 **Operação:**
 - Tarefa `CalculadoraClaims_ColetaIndicesBACEN` — roda diariamente às 13:00 (BACEN + TJSP)
 - Tarefa `CalculadoraClaims_ColetaCJF_Mensal` — roda todo dia 5 às 08:00 (CJF, 12 tabelas)
+- Juros de Mora — **importação manual única** (`--importar-juros`), sem agendamento
 - Logs em `logs/coleta_AAAA-MM-DD.log`, `logs/agendador.log` e `logs/agendador_cjf.log`
 
-## 9. Próximas fases
+## 10. Próximas fases
 
 | # | Fase | Status |
 |---|------|--------|
 | 1 | Ingestão BACEN (8 séries) | ✅ Concluído |
 | 2 | Ingestão TJSP (EC 113/2021) | ✅ Concluído |
 | 3 | Ingestão CJF — SICOM (TCM + VHI × 6 categorias) | ✅ Concluído |
-| 4 | Motor de cálculo de fatores acumulados entre datas | ⏭️ Próximo |
-| 5 | Importação da planilha-protótipo | ⏭️ |
-| 6 | Interface (CLI ou Streamlit) | ⏭️ |
-| 7 | Definição de usuários, segurança e auditoria | ⏭️ |
+| 4 | Importação estática das Tabelas de Juros de Mora (3 categorias) | ✅ Concluído |
+| 5 | Motor de cálculo de fatores acumulados entre datas | ⏭️ Próximo |
+| 6 | Importação da planilha-protótipo | ⏭️ |
+| 7 | Interface (CLI ou Streamlit) | ⏭️ |
+| 8 | Definição de usuários, segurança e auditoria | ⏭️ |
 
-A próxima fase — **motor de cálculo** — vai responder perguntas como "qual o fator de correção EC 113 entre 03/2022 e 05/2026?" ou "atualize R$ X de data Y até hoje pela Selic acumulada". É onde os dados ingeridos viram valor de negócio. Com BACEN, TJSP e CJF todos disponíveis em SQLite, o motor terá acesso a todas as fontes oficiais utilizadas na Justiça Federal e no TJSP.
+A próxima fase — **motor de cálculo** — vai responder perguntas como "qual o fator de correção EC 113 entre 03/2022 e 05/2026?" ou "atualize R$ X de data Y até hoje pela Selic acumulada", agora também incorporando os **juros de mora** até 09/12/2021. É onde os dados ingeridos viram valor de negócio. Com BACEN, TJSP, CJF e Juros de Mora todos disponíveis em SQLite, o motor terá acesso a todas as fontes oficiais utilizadas na Justiça Federal e no TJSP.
 
 Duas decisões técnicas já antecipadas para essa fase:
 

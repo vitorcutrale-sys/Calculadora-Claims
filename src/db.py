@@ -136,6 +136,41 @@ CREATE TABLE IF NOT EXISTS cjf_fatores (
 
 CREATE INDEX IF NOT EXISTS idx_cjf_fatores_anomes
     ON cjf_fatores(tabela_chave, ano, mes);
+
+-- ---------------------------------------------------------------- --
+-- Tabelas de Juros de Mora (importação ESTÁTICA / histórica)        --
+-- ---------------------------------------------------------------- --
+-- Juros de mora em condenações da Fazenda Pública (precatórios).
+-- Dados fechados: deixaram de ser aplicados em 09/12/2021 (EC 113/2021).
+-- Importados uma única vez a partir de PDFs locais; SHA-256 garante
+-- idempotência caso a importação seja repetida.
+CREATE TABLE IF NOT EXISTS juros_publicacoes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tabela_chave    TEXT NOT NULL,       -- chave em config.JUROS_TABELAS
+    descricao       TEXT,
+    data_referencia TEXT,                -- "YYYY-MM": acumulado até este mês
+    data_importacao TEXT NOT NULL,
+    sha256          TEXT NOT NULL,
+    caminho_arquivo TEXT NOT NULL,
+    UNIQUE (tabela_chave, sha256)
+);
+
+-- Taxas de juros de mora ACUMULADAS (em %), em formato longo.
+-- UNIQUE(tabela_chave, ano, mes) garante upsert idempotente.
+CREATE TABLE IF NOT EXISTS juros_fatores (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tabela_chave    TEXT NOT NULL,
+    ano             INTEGER NOT NULL,
+    mes             INTEGER NOT NULL,    -- 1..12
+    taxa            REAL NOT NULL,       -- % de juros de mora acumulado
+    publicacao_id   INTEGER NOT NULL,
+    atualizado_em   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (tabela_chave, ano, mes),
+    FOREIGN KEY (publicacao_id) REFERENCES juros_publicacoes(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_juros_fatores_anomes
+    ON juros_fatores(tabela_chave, ano, mes);
 """
 
 
@@ -470,6 +505,97 @@ def resumo_cjf(conn: sqlite3.Connection) -> list[sqlite3.Row]:
             MIN(ano)        AS primeiro_ano,
             MAX(ano)        AS ultimo_ano
         FROM cjf_fatores
+        GROUP BY tabela_chave
+        ORDER BY tabela_chave
+        """
+    )
+    return cur.fetchall()
+
+
+# ------------------------------------------------------------------ #
+# Juros de Mora (importação estática)                                 #
+# ------------------------------------------------------------------ #
+def ultimo_sha256_juros(
+    conn: sqlite3.Connection, tabela_chave: str
+) -> Optional[str]:
+    """SHA-256 da publicação de juros mais recente para essa chave."""
+    cur = conn.execute(
+        """
+        SELECT sha256 FROM juros_publicacoes
+         WHERE tabela_chave = ?
+         ORDER BY id DESC LIMIT 1
+        """,
+        (tabela_chave,),
+    )
+    row = cur.fetchone()
+    return row["sha256"] if row else None
+
+
+def registrar_publicacao_juros(
+    conn: sqlite3.Connection,
+    tabela_chave: str,
+    descricao: str,
+    data_referencia: str,
+    sha256: str,
+    caminho_arquivo: str,
+) -> int:
+    """Insere registro de publicação de juros e retorna seu id."""
+    cur = conn.execute(
+        """
+        INSERT INTO juros_publicacoes
+            (tabela_chave, descricao, data_referencia,
+             data_importacao, sha256, caminho_arquivo)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            tabela_chave,
+            descricao,
+            data_referencia,
+            datetime.now().isoformat(timespec="seconds"),
+            sha256,
+            caminho_arquivo,
+        ),
+    )
+    return cur.lastrowid
+
+
+def upsert_fatores_juros(
+    conn: sqlite3.Connection,
+    tabela_chave: str,
+    publicacao_id: int,
+    taxas: Iterable[tuple[int, int, float]],
+) -> int:
+    """Insere ou atualiza taxas de juros (ano, mes, taxa). Retorna linhas afetadas."""
+    afetadas = 0
+    for ano, mes, taxa in taxas:
+        cur = conn.execute(
+            """
+            INSERT INTO juros_fatores
+                (tabela_chave, ano, mes, taxa, publicacao_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(tabela_chave, ano, mes) DO UPDATE SET
+                taxa          = excluded.taxa,
+                publicacao_id = excluded.publicacao_id,
+                atualizado_em = datetime('now')
+            WHERE juros_fatores.taxa != excluded.taxa
+            """,
+            (tabela_chave, ano, mes, taxa, publicacao_id),
+        )
+        if cur.rowcount == 1:
+            afetadas += 1
+    return afetadas
+
+
+def resumo_juros(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Resumo por tabela de juros: contagem, ano mínimo e máximo."""
+    cur = conn.execute(
+        """
+        SELECT
+            tabela_chave,
+            COUNT(*)        AS n_fatores,
+            MIN(ano)        AS primeiro_ano,
+            MAX(ano)        AS ultimo_ano
+        FROM juros_fatores
         GROUP BY tabela_chave
         ORDER BY tabela_chave
         """
