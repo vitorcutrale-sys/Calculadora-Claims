@@ -104,7 +104,19 @@ SERIES = {
         "periodicidade":"mensal",
         "fonte":"BCB",
         "descricao":"Indice Nacional de Preços ao Consumidor Amplo"
-    }
+    },
+    29543: {
+        "nome": "Taxa Legal",
+        "unidade": "% a.m.",
+        "periodicidade": "mensal",   # série publicada mensalmente, desde ago/2024
+        "fonte": "BCB",
+        "descricao": (
+            "Taxa legal de juros (art. 406 do Código Civil, redação da Lei "
+            "14.905/2024, e Resolução CMN 5.171/2024) — Selic deduzido o IPCA. "
+            "Aplicável aos juros de mora a partir de set/2025 (Tema 1.419/STF). "
+            "Coletada na rotina diária do BACEN (incremental)."
+        ),
+    },
 }
 
 # ------------------------------------------------------------------ #

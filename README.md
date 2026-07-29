@@ -28,7 +28,12 @@ Calculadora-Claims/
 │   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
 │   ├── juros.py                 Importador estático das tabelas de Juros de Mora (PDF)
 │   ├── db.py                    Camada SQLite (BACEN + TJSP + CJF + Juros)
-│   └── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
+│   ├── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
+│   └── calculo/                 Motor de cálculo (Fase 5)
+│       ├── modelo.py            Premissas do ativo (inputs) + regras de datas da LOA
+│       ├── perfis.py            Receitas declarativas por tipo de ativo
+│       ├── indices.py           Leitores de índices em Decimal
+│       └── motor.py             Segmentador de regimes -> Valor de Face Bruto
 ├── data/
 │   └── claims.db                Banco SQLite (criado na 1ª execução)
 ├── referencias/
@@ -56,6 +61,9 @@ Calculadora-Claims/
 | 4391   | CDI mensal               | % a.m.    | BCB   | mensal        |
 | 7478   | IPCA-E                   | % a.m.    | BCB   | mensal        |
 | 7811   | TR - Taxa Referencial    | % a.m.    | BCB   | mensal        |
+| 29543  | Taxa Legal               | % a.m.    | BCB   | mensal        |
+
+> **Taxa Legal (29543)** — taxa legal de juros do art. 406 do Código Civil (redação da Lei 14.905/2024 e Resolução CMN 5.171/2024): Selic deduzido o IPCA. Publicada desde ago/2024; usada como juros do regime pós-EC 136 para precatórios da LOA 2027 em diante.
 
 Para acrescentar, remover ou alterar séries, edite o dicionário `SERIES` em `src/config.py` e rode `python coletar_indices.py` novamente — os metadados serão sincronizados automaticamente na tabela `series` do banco.
 
@@ -318,6 +326,79 @@ Registra início, fim, status (`success` / `partial` / `error`), contagens e men
 
 `UNIQUE (tabela_chave, ano, mes)` — uma linha por mês/ano em cada tabela.
 
+## Motor de cálculo (Fase 5)
+
+O pacote `src/calculo/` calcula o **Valor de Face Bruto** de um precatório federal, reconstruindo o saldo ao longo do tempo a partir dos índices já ingeridos.
+
+### Como usar
+
+```python
+from datetime import date
+from decimal import Decimal
+from src import db
+from src.calculo.modelo import PremissasAtivo
+from src.calculo import motor
+
+premissas = PremissasAtivo(
+    valor_principal=Decimal("65953153"),
+    valor_juros=Decimal("234154969"),
+    data_base=date(2015, 7, 1),
+    ano_orcamento=2016,               # define a expedição e o fim da LOA
+    perfil="federal_servidores",
+)
+with db.conectar() as conn:
+    r = motor.calcular_vf_bruto(conn, premissas)   # default: até hoje
+
+print(r.saldo)        # Valor de Face Bruto
+print(r.principal, r.juros, r.selic)               # componentes
+for seg in r.trace:   # auditoria: um registro por segmento de regime
+    print(seg["regime"], seg["de"], seg["ate"], seg["saldo"])
+```
+
+### Regimes encadeados
+
+O motor segmenta a linha do tempo entre a data base e a data de cálculo, aplicando o regime vigente em cada trecho:
+
+| Regime | Janela | Método |
+|--------|--------|--------|
+| **R1** | até nov/2021 | correção SICOM/CJF (fecha na referência dez/2021) + juros de mora |
+| **R2** | dez/2021 a jul/2025 | Selic **linear** sobre o saldo global (EC 113/2021) |
+| **R3** | ago/2025 em diante | IPCA composto + juros: **2% a.a. pro-rata** (DAYS360) para LOA ≤ 2026, ou **Taxa Legal** (série 29543) para LOA ≥ 2027 |
+| **R_graça** | expedição+1 até 31/12 do ano da LOA | IPCA-E, **sem juros** — *sobrepõe* o regime legal na sua janela |
+
+O `R_graça` recorta a régua legal: um precatório antigo pode passar por `R1 → R_graça → R1 → R2 → R3`. A composição principal/juros/selic é carregada por toda a cadeia (o juros do R3 incide só sobre o principal corrigido).
+
+Datas derivadas do **ano orçamentário** (`src/calculo/modelo.py`):
+
+| Ano orçamento | Expedição (fim da correção pré-graça) | Fim da LOA |
+|---------------|----------------------------------------|-----------|
+| ≤ 2022        | 30/06 do ano anterior                  | 31/12 do ano |
+| 2023–2026     | 31/03 do ano anterior                  | 31/12 do ano |
+| ≥ 2027        | 31/01 do ano anterior                  | 31/12 do ano |
+
+### Perfis disponíveis
+
+| Perfil | Categoria (CJF) | Correção R1 | Juros de mora |
+|--------|-----------------|-------------|---------------|
+| `federal_desap` | 1 — Desapropriações | TCM_1 | Geral + **compensatórios** |
+| `federal_previdenciario` | 2 — Benefício Previdenciário | TCM_2 | Geral |
+| `federal_servidores` | 3 — Servidores | TCM_3 | Servidor |
+| `federal_tributario` | 4 — Indébito Tributário | TCM_4 | Tributário |
+| `federal_fazenda_geral` | 5 — Devedor Fazenda Pública | TCM_5 | Geral |
+| `federal_naofazenda_geral` | 6 — Devedor não-Fazenda | TCM_6 | Geral |
+
+**`federal_tributario` tem regime próprio** (não usa graça nem os cortes EC 113/EC 136): correção TCM_4 + juros de mora até 01/1996 e, a partir daí, **Selic linear somente sobre o principal** (o componente de juros fica fixo).
+
+**`federal_desap`** aceita duas booleanas em `PremissasAtivo`:
+- `precatorio_expedido` — quando `False`, incidem **juros compensatórios simples** sobre o principal corrigido, dentro do R1.
+- `transito_antes_adi2332` — `True`: 1% a.m. em todo o R1; `False`: 1% a.m. até 10/06/1997 e 0,5% a.m. até nov/2021 (de dez/2021 em diante já estão embutidos na Selic / Taxa Legal).
+
+Para acrescentar um tipo de ativo, adicione um perfil em `src/calculo/perfis.py` — o motor é genérico e não precisa ser alterado.
+
+### Precisão
+
+Todo o motor opera em `Decimal` (nunca `float`), lendo os valores do banco como `Decimal(str(valor))`, para não acumular erro de ponto flutuante nas multiplicações encadeadas de fatores.
+
 ## Consultar o banco
 
 Você pode abrir `data/claims.db` em qualquer ferramenta SQLite. Recomendo:
@@ -352,7 +433,8 @@ Isso evita o acúmulo de erros de ponto flutuante em séries longas — fundamen
 2. ✅ Ingestão de Tabelas Práticas do TJSP (EC 113/2021)
 3. ✅ Ingestão mensal das Tabelas CJF — SICOM (TCM + VHI × 6 categorias)
 4. ✅ Importação estática das Tabelas de Juros de Mora (3 categorias, base histórica)
-5. ⏭️ Motor de cálculo de fatores acumulados entre datas (BACEN, TJSP, CJF e Juros)
-6. ⏭️ Importação da planilha-protótipo de cálculos
-7. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
+5. 🔄 Motor de cálculo — Valor de Face Bruto dos 6 tipos de precatório federal (concluído);
+   pendentes: curva mensal, camada de valor líquido (PSS/IR-RRA/imposto) e persistência
+6. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
+7. ⏭️ Precatórios estaduais (servidores, desapropriação, tributário, genéricos)
 8. ⏭️ Definir usuários finais e segurança/auditoria

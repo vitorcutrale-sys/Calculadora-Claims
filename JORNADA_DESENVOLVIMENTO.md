@@ -2,7 +2,7 @@
 
 Este documento é o registro narrativo do que foi construído, por que foi construído daquela forma, e o que aprendemos ao longo do caminho. Diferente do `README.md` (que documenta o **estado atual** do projeto para quem chega novo), este arquivo conta a **história** do desenvolvimento.
 
-Última atualização: **2026-06-08**.
+Última atualização: **2026-07-29**.
 
 ---
 
@@ -16,8 +16,9 @@ Este documento é o registro narrativo do que foi construído, por que foi const
 6. [Fase 2 — Ingestão das Tabelas Práticas do TJSP](#6-fase-2--ingestão-das-tabelas-práticas-do-tjsp)
 7. [Fase 3 — Ingestão das Tabelas CJF (Justiça Federal)](#7-fase-3--ingestão-das-tabelas-cjf-justiça-federal)
 8. [Fase 4 — Importação das Tabelas de Juros de Mora](#8-fase-4--importação-das-tabelas-de-juros-de-mora)
-9. [Estado atual do projeto](#9-estado-atual-do-projeto)
-10. [Próximas fases](#10-próximas-fases)
+9. [Fase 5 — Motor de cálculo do Valor de Face](#9-fase-5--motor-de-cálculo-do-valor-de-face)
+10. [Estado atual do projeto](#10-estado-atual-do-projeto)
+11. [Próximas fases](#11-próximas-fases)
 
 ---
 
@@ -314,7 +315,66 @@ A **lição genérica**: quando um PDF é genuinamente tabular e tem linhas/anos
 
 Seguindo o padrão de TJSP/CJF, duas tabelas novas: `juros_publicacoes` (uma linha por PDF importado, com SHA-256 e data de referência) e `juros_fatores` (taxas em formato longo, coluna `taxa` em vez de `fator`/`valor` para deixar a semântica explícita). O módulo `src/juros.py` lê o PDF local (sem HTTP), arquiva uma cópia em `referencias/juros/` com hash no nome, parseia e persiste. O `coletar_indices.py` ganhou os flags `--importar-juros` e `--origem`.
 
-## 9. Estado atual do projeto
+## 9. Fase 5 — Motor de cálculo do Valor de Face
+
+Com as quatro fontes ingeridas, começou a fase em que os dados viram valor de negócio: o **motor de cálculo**. O ponto de partida foi a planilha-protótipo em uso (`Conferência Cálculos PRCs.xlsx`), que serviu de **oráculo** — o alvo era bater os números dela centavo a centavo.
+
+### Engenharia reversa da planilha
+
+A planilha tem três abas com papéis distintos: `MACRO` (banco de índices mensais), `VF - INC` (o motor real, uma linha por mês) e `PAINEL` (inputs do ativo + camada comercial). A `VF - INC` revelou a mecânica central, repetida em cascata:
+
+```
+BOP (saldo início do mês) = EOP do mês anterior
+Correção = BOP × índice do mês
+EOP = BOP + Correção + injeções
+```
+
+Ou seja, capitalização mensal com principal e juros em **trilhas separadas**, e o `MAX` de vários blocos no final selecionando o regime vigente. Isso confirmou que a nossa base SQLite já tinha as séries necessárias (IPCA, IPCA-E, Selic) — a `MACRO` da planilha é, na prática, o nosso `claims.db`.
+
+### A arquitetura: motor genérico + perfis declarativos
+
+A decisão de design foi separar **o motor** (que sabe apenas encadear regimes) das **receitas** (que dizem quais índices e tabelas cada tipo de ativo usa). Adicionar um tipo de ativo passou a ser adicionar um perfil em `perfis.py`, sem tocar no motor — a mesma filosofia do `config.py` na fase de ingestão. Casos com lógica realmente peculiar ganham uma função dedicada (o "escape para código"), como aconteceu com o tributário.
+
+### Os regimes e a descoberta do R_graça
+
+Os regimes legais foram mapeados em conversa, um por vez, cada um validado numericamente antes de seguir:
+
+- **R1** (até nov/2021): correção pela tabela SICOM/CJF da categoria + juros de mora da tabela histórica; principal e juros corrigidos pelo mesmo fator, juros novos só sobre o principal.
+- **R2** (dez/2021 a jul/2025): Selic **linear** (soma simples) sobre o saldo global — EC 113/2021.
+- **R3** (ago/2025 em diante): IPCA composto + juros sobre o principal corrigido.
+- **R_graça**: IPCA-E, **sem juros**, entre a expedição e o fim da LOA.
+
+A descoberta conceitual mais importante foi que o **R_graça não é o último regime — é uma janela que se insere no meio da régua legal**. Um precatório antigo passa por `R1 → R_graça → R1 → R2 → R3`: sai do R1 para a graça e **volta** ao R1 depois. Isso levou o motor a ser escrito como um **segmentador de linha do tempo**: ele classifica cada mês (com a graça sobrepondo o regime legal), agrupa meses consecutivos de mesmo regime em segmentos e aplica o método de cada um, carregando os componentes (principal, juros, selic) por toda a cadeia.
+
+Um efeito elegante: como as tabelas de juros de mora são **acumuladas**, calcular `taxa(início) − taxa(fim)` por segmento faz os juros **pularem a janela de graça automaticamente**, sem código especial.
+
+### Lições de dados
+
+Três descobertas empíricas mudaram o código:
+
+**1. A referência do SICOM.** O coeficiente `coef(dez/2021) = 1` provou que as tabelas TCM no banco estão referenciadas a dez/2021 — então `coef(data_base)` já corrige "até dez/2021". Isso unificou a regra do R1: `fator = coef(início) / coef(mês seguinte ao fim do segmento)`. Na primeira tentativa dividimos por `coef(nov/2021)`, o que **comeu o IPCA-E de novembro/2021** e deixou o resultado ~1,2% abaixo da planilha. Corrigido para fechar em dez/2021, bateu na vírgula.
+
+**2. Qual índice cada TCM usa.** Comparando as razões de coeficientes com os índices do BACEN, o match foi exato na 8ª casa: as categorias **1, 3, 5 e 6 usam IPCA-E** (são a mesma correção — a TCM_6 é apenas proporcional às outras), a **2 (previdenciário) tem índice próprio** (INPC/IGP) e a **4 (tributário) usa Selic**. Isso validou a decisão de compartilhar o segmentador entre as categorias e dar tratamento próprio ao tributário.
+
+**3. VHI ≠ TCM.** A tentativa de usar `VHI_5` para correção falhou com erro claro: a série é incompleta (699 fatores, sem dez/2021). As VHI listam *valores históricos de indexadores*, com lacunas; quem serve para correção mensal é a **TCM**. O erro explícito no leitor evitou um cálculo silenciosamente errado.
+
+### Os casos com regime próprio
+
+**Tributário (`federal_tributario`)** não usa graça nem os cortes EC 113/EC 136: correção TCM_4 + juros até 01/1996 e, a partir daí, **Selic linear somente sobre o principal**, com o componente de juros congelado. A tabela TCM_4 é híbrida (fatores até 01/1996, Selic % acumulada depois) e tem um buraco em todo o ano de 1996 — por isso a Selic pós-1996 é lida da série BACEN 4390, que é completa. Confirmamos a equivalência: a diferença de acumulados da TCM_4 entre dois meses é exatamente a Selic do BACEN.
+
+**Desapropriação (`federal_desap`)** é o caso mais complexo: com o precatório expedido, comporta-se como o perfil da Fazenda Pública; **sem expedição**, incidem **juros compensatórios simples** sobre o principal corrigido, dentro do R1, em dois regimes possíveis conforme o trânsito em julgado tenha sido antes ou depois da **ADI 2332** (1% a.m. sempre, ou 1% até 10/06/1997 e 0,5% até nov/2021). De dez/2021 em diante não há taxa adicional — já está embutida na Selic e, depois, na Taxa Legal.
+
+### A Taxa Legal e o corte da LOA 2027
+
+A última peça foi a série **29543 (Taxa Legal)** do BACEN — art. 406 do Código Civil na redação da Lei 14.905/2024. Ela entrou na coleta diária apenas adicionando uma entrada em `config.SERIES` (a rotina do Task Scheduler itera o dicionário, então nada no agendador mudou). Descobrimos que é uma série **mensal**, publicada desde ago/2024.
+
+Com ela, o R3 ganhou **dois modos de juros**: precatórios de **LOA ≥ 2027** usam a Taxa Legal (soma linear); os anteriores mantêm os **2% a.a. pro-rata** (DAYS360 desde ago/2025). O `trace` do motor registra qual modo foi aplicado, para auditoria.
+
+### Validação
+
+O caso de referência (LOA 2016, valor as-of a expedição em 07/2015) reproduziu o resultado da planilha **com diferença de R$ 0,00**, com o motor montando os quatro segmentos sozinho a partir de apenas `data_base` + `ano_orcamento`. Também mapeamos empiricamente todas as combinações de posição da janela de graça (`R_graça → R2 → R3`, `R1 → R_graça → R1 → R2 → R3`, `R1 → R2 → R3 → R_graça`), incluindo o caso mais difícil — o R1 partido em dois pela graça.
+
+## 10. Estado atual do projeto
 
 ```
 Calculadora-Claims/
@@ -332,7 +392,12 @@ Calculadora-Claims/
 │   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
 │   ├── juros.py                 Importador estático das tabelas de Juros de Mora (PDF)
 │   ├── db.py                    Camada SQLite (schema completo + helpers)
-│   └── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
+│   ├── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
+│   └── calculo/                 Motor de cálculo (Fase 5)
+│       ├── modelo.py            Premissas do ativo + regras de datas da LOA
+│       ├── perfis.py            Receitas declarativas por tipo de ativo
+│       ├── indices.py           Leitores de índices em Decimal
+│       └── motor.py             Segmentador de regimes -> Valor de Face Bruto
 ├── data/
 │   └── claims.db                Banco SQLite com toda a base
 ├── referencias/
@@ -350,7 +415,7 @@ Calculadora-Claims/
 
 | Tabela | Conteúdo |
 |--------|----------|
-| `series` | Metadados das 8 séries BACEN |
+| `series` | Metadados das 9 séries BACEN (incl. Taxa Legal, série 29543) |
 | `observacoes` | Histórico de valores BACEN (data + valor) |
 | `coletas_log` | Auditoria de cada execução do coletor |
 | `tjsp_publicacoes` | Histórico de PDFs baixados do TJSP (com SHA-256) |
@@ -369,20 +434,25 @@ Calculadora-Claims/
 - Juros de Mora — **importação manual única** (`--importar-juros`), sem agendamento
 - Logs em `logs/coleta_AAAA-MM-DD.log`, `logs/agendador.log` e `logs/agendador_cjf.log`
 
-## 10. Próximas fases
+## 11. Próximas fases
 
 | # | Fase | Status |
 |---|------|--------|
-| 1 | Ingestão BACEN (8 séries) | ✅ Concluído |
+| 1 | Ingestão BACEN (9 séries, incl. Taxa Legal) | ✅ Concluído |
 | 2 | Ingestão TJSP (EC 113/2021) | ✅ Concluído |
 | 3 | Ingestão CJF — SICOM (TCM + VHI × 6 categorias) | ✅ Concluído |
 | 4 | Importação estática das Tabelas de Juros de Mora (3 categorias) | ✅ Concluído |
-| 5 | Motor de cálculo de fatores acumulados entre datas | ⏭️ Próximo |
-| 6 | Importação da planilha-protótipo | ⏭️ |
-| 7 | Interface (CLI ou Streamlit) | ⏭️ |
+| 5 | Motor de cálculo — Valor de Face Bruto (6 perfis federais) | ✅ Concluído |
+| 5.1 | Curva mensal de valor de face | ⏭️ Próximo |
+| 5.2 | Camada de valor líquido (PSS, IR-RRA, imposto, % do ativo) | ⏭️ |
+| 5.3 | Persistência das curvas no banco | ⏭️ |
+| 6 | Interface (CLI ou Streamlit) | ⏭️ |
+| 7 | Precatórios estaduais (servidores, desapropriação, tributários, genéricos) | ⏭️ |
 | 8 | Definição de usuários, segurança e auditoria | ⏭️ |
 
-A próxima fase — **motor de cálculo** — vai responder perguntas como "qual o fator de correção EC 113 entre 03/2022 e 05/2026?" ou "atualize R$ X de data Y até hoje pela Selic acumulada", agora também incorporando os **juros de mora** até 09/12/2021. É onde os dados ingeridos viram valor de negócio. Com BACEN, TJSP, CJF e Juros de Mora todos disponíveis em SQLite, o motor terá acesso a todas as fontes oficiais utilizadas na Justiça Federal e no TJSP.
+O motor já entrega o **Valor de Face Bruto** auditável dos seis tipos de precatório federal. Os próximos passos naturais são: (a) expor a **curva mensal** — o valor de face em cada mês, que é o que se quer armazenar e exibir; (b) a **camada de valor líquido**, aplicando PSS, IR-RRA (tabela progressiva), imposto de alíquota fixa e o percentual do ativo, com o efeito do destacamento de honorários (base bruta ou líquida); e (c) **persistir** as curvas calculadas no banco, com auditoria de qual perfil e quais versões de tabela geraram cada número.
+
+Depois disso, a atenção volta-se para os **precatórios estaduais**, que serão organizados em quatro classificações (ações de servidores, desapropriação, tributárias e genéricas) — onde as Tabelas Práticas do TJSP, já ingeridas na Fase 2, entram no lugar do SICOM.
 
 Duas decisões técnicas já antecipadas para essa fase:
 
