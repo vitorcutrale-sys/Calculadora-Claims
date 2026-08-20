@@ -9,6 +9,8 @@ Uso:
     python coletar_indices.py --so-tjsp                # roda apenas TJSP
     python coletar_indices.py --so-cjf                 # roda apenas CJF
     python coletar_indices.py --so-cjf --mes 5 --ano 2025  # CJF para mês/ano específico
+    python coletar_indices.py --so-irpf                 # coleta anual da tabela do IRPF
+    python coletar_indices.py --so-irpf --ano 2025       # IRPF de um ano específico
     python coletar_indices.py --importar-juros          # importa tabelas de juros de mora (estático)
     python coletar_indices.py --importar-juros --origem "C:\\caminho\\dos\\pdfs"  # origem custom
     python coletar_indices.py --resumo                 # apenas imprime resumo do banco
@@ -53,6 +55,7 @@ def imprimir_resumo() -> None:
         linhas_tjsp = db.resumo_tjsp(conn)
         linhas_cjf = db.resumo_cjf(conn)
         linhas_juros = db.resumo_juros(conn)
+        linhas_irpf = db.resumo_irpf(conn)
 
     print("\n=== Resumo do banco de índices (BACEN) ===")
     print(
@@ -94,6 +97,17 @@ def imprimir_resumo() -> None:
             print(
                 f"{r['tabela_chave']:<22} | {r['n_fatores']:>8} | "
                 f"{r['primeiro_ano']:>7} | {r['ultimo_ano']:>8}"
+            )
+
+    if linhas_irpf:
+        print("\n=== Tabela Progressiva Mensal do IRPF (por vigência) ===")
+        print(f"{'Vigência':<24} | {'Faixas':>6} | {'Isenção até (R$)':>17}")
+        print("-" * 54)
+        for r in linhas_irpf:
+            periodo = f"{r['vigencia_inicio']} a {r['vigencia_fim'] or 'atual'}"
+            print(
+                f"{periodo:<24} | {r['n_faixas']:>6} | "
+                f"{r['isencao_ate']:>17,.2f}"
             )
 
     print(f"\nBanco: {config.DB_PATH}")
@@ -140,6 +154,11 @@ def main() -> int:
         "--importar-juros",
         action="store_true",
         help="Importa as tabelas de juros de mora (estático, a partir de PDFs locais).",
+    )
+    grupo_fonte.add_argument(
+        "--so-irpf",
+        action="store_true",
+        help="Roda apenas a coleta anual da Tabela Progressiva Mensal do IRPF.",
     )
 
     parser.add_argument(
@@ -217,6 +236,25 @@ def main() -> int:
                 estat_cjf["fatores_atualizados"],
             )
             if estat_cjf["tabelas_com_erro"] > 0:
+                exit_code = 1
+        elif args.so_irpf:
+            logger.info("Modo: apenas IRPF (ano=%s)", args.ano or "corrente")
+            estat_irpf = coletor.coletar_irpf(ano=args.ano)
+            if estat_irpf["pagina_inalterada"]:
+                logger.info(
+                    "IRPF %d: página inalterada, nada a fazer.",
+                    estat_irpf["ano_pagina"],
+                )
+            else:
+                logger.info(
+                    "IRPF %d: %d tabela(s), %d faixa(s) atualizada(s).",
+                    estat_irpf["ano_pagina"],
+                    estat_irpf["tabelas_encontradas"],
+                    estat_irpf["faixas_atualizadas"],
+                )
+            if estat_irpf["erros"]:
+                for err in estat_irpf["erros"]:
+                    logger.error("IRPF erro: %s", err)
                 exit_code = 1
         elif args.importar_juros:
             logger.info(

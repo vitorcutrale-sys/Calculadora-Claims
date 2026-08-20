@@ -6,6 +6,7 @@ Projeto para construir a base de dados de índices econômicos aplicáveis a pre
 - **TJSP — Tabelas Práticas** — PDFs oficiais com fatores acumulados de atualização monetária (atualmente, a Tabela da EC 113/2021).
 - **CJF — SICOM** — Tabelas de Correção Monetária e Valores Históricos dos Indexadores do Conselho da Justiça Federal, para as 6 categorias de ação judicial, via formulário web mensal.
 - **Juros de Mora (estático)** — Tabelas históricas de juros de mora em condenações da Fazenda Pública (Servidores, Não Tributário e Tributário), importadas uma única vez a partir de PDFs locais. **Sem coleta periódica**: os juros deixaram de ser aplicados em 09/12/2021 (art. 3º da EC 113/2021).
+- **IRPF — Receita Federal** — Tabela Progressiva Mensal (faixa, alíquota, parcela a deduzir), coletada duas vezes por ano da página oficial, com histórico de **vigências** (a tabela muda por lei, às vezes no meio do ano). Usada no cálculo do IR-RRA.
 
 O script Python baixa, persiste e mantém atualizado tudo em SQLite local, com auditoria por hash de cada versão dos arquivos baixados.
 
@@ -27,13 +28,15 @@ Calculadora-Claims/
 │   ├── tjsp.py                  Download + parser das tabelas TJSP (PDF)
 │   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
 │   ├── juros.py                 Importador estático das tabelas de Juros de Mora (PDF)
+│   ├── irpf.py                  Coleta + parser da Tabela Progressiva Mensal do IRPF
 │   ├── db.py                    Camada SQLite (BACEN + TJSP + CJF + Juros)
 │   ├── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
 │   └── calculo/                 Motor de cálculo (Fase 5)
 │       ├── modelo.py            Premissas do ativo (inputs) + regras de datas da LOA
 │       ├── perfis.py            Receitas declarativas por tipo de ativo
 │       ├── indices.py           Leitores de índices em Decimal
-│       └── motor.py             Segmentador de regimes -> Valor de Face Bruto
+│       ├── motor.py             Segmentador de regimes -> Valor de Face Bruto
+│       └── liquido.py           Impostos, honorários e share -> Valor Líquido
 ├── data/
 │   └── claims.db                Banco SQLite (criado na 1ª execução)
 ├── referencias/
@@ -126,6 +129,21 @@ python coletar_indices.py --importar-juros --origem "C:\caminho\dos\pdfs"   # or
 
 Para adicionar ou remover tabelas, edite o dicionário `JUROS_TABELAS` em `src/config.py`.
 
+## Tabela Progressiva Mensal do IRPF
+
+Coletada da página oficial da Receita Federal (uma por ano-calendário), da qual extraímos **apenas a Tabela de Incidência Mensal** — a que o IR-RRA usa.
+
+```cmd
+python coletar_indices.py --so-irpf              # ano corrente
+python coletar_indices.py --so-irpf --ano 2025   # ano específico
+```
+
+**Vigências, não anos.** A tabela muda por lei e às vezes no meio do ano (houve mudança em fev/2024 e maio/2025), então cada versão é gravada com `vigencia_inicio`/`vigencia_fim`. Uma mesma página pode conter mais de uma vigência. A consulta `db.tabela_irpf_vigente(conn, data)` devolve a tabela aplicável a qualquer data.
+
+**Validação estrita.** A página não usa `<table>` HTML — é texto estruturado. O parser ancora no cabeçalho `Base de cálculo / Alíquota / Dedução`, distingue a tabela mensal da anual pela magnitude e **exige** 5 faixas com alíquotas 0 / 7,5 / 15 / 22,5 / 27,5 e limites crescentes. Se a página mudar de formato ou a lei alterar as alíquotas, a coleta **falha com erro claro** apontando o HTML arquivado em `referencias/irpf/`, em vez de gravar número errado.
+
+A cadência é semestral (ver agendamento abaixo) — o SHA-256 garante que rodar de novo não reprocessa nada quando a página não mudou.
+
 ## Pré-requisitos
 
 - Python 3.10 ou superior (verifique com `python --version`)
@@ -175,6 +193,7 @@ python coletar_indices.py --so-tjsp            # roda apenas a coleta TJSP
 python coletar_indices.py --so-cjf             # roda apenas a coleta CJF (mês corrente)
 python coletar_indices.py --so-cjf --mes 5 --ano 2025  # CJF para mês/ano específico
 python coletar_indices.py --importar-juros     # importa as tabelas de Juros de Mora (estático)
+python coletar_indices.py --so-irpf            # coleta a Tabela Progressiva Mensal do IRPF
 ```
 
 > **Nota:** `--importar-juros` é uma operação estática e **não** faz parte da coleta padrão (`coletar_tudo`). Rode-a manualmente apenas quando precisar (re)importar os PDFs de juros.
@@ -207,7 +226,19 @@ schtasks /Run    /TN "CalculadoraClaims_ColetaCJF_Mensal"
 schtasks /Delete /TN "CalculadoraClaims_ColetaCJF_Mensal" /F
 ```
 
-Os logs ficam em `logs/agendador.log` (wrapper diário), `logs/agendador_cjf.log` (wrapper mensal) e `logs/coleta_AAAA-MM-DD.log` (logs estruturados do Python).
+### Rotina semestral — IRPF
+
+1. Clique com o botão direito em `agendar_irpf_semestral.bat`.
+2. Escolha **Executar como administrador**.
+3. Registra a tarefa `CalculadoraClaims_ColetaIRPF_Semestral` para rodar nos dias **15 de janeiro e 15 de julho às 08:00** — janeiro captura a tabela do novo ano-calendário; julho captura eventuais mudanças no meio do ano.
+
+```cmd
+schtasks /Query  /TN "CalculadoraClaims_ColetaIRPF_Semestral" /V /FO LIST
+schtasks /Run    /TN "CalculadoraClaims_ColetaIRPF_Semestral"
+schtasks /Delete /TN "CalculadoraClaims_ColetaIRPF_Semestral" /F
+```
+
+Os logs ficam em `logs/agendador.log` (wrapper diário), `logs/agendador_cjf.log` (wrapper mensal), `logs/agendador_irpf.log` (wrapper semestral) e `logs/coleta_AAAA-MM-DD.log` (logs estruturados do Python).
 
 ## Estrutura do banco
 
@@ -326,6 +357,35 @@ Registra início, fim, status (`success` / `partial` / `error`), contagens e men
 
 `UNIQUE (tabela_chave, ano, mes)` — uma linha por mês/ano em cada tabela.
 
+**Tabela `irpf_publicacoes`** — versões da página do IRPF coletadas
+
+| coluna | tipo |
+|--------|------|
+| id (PK) | INTEGER |
+| ano_pagina | INTEGER (ano-calendário da página) |
+| fonte_url | TEXT |
+| data_coleta | TEXT |
+| sha256 | TEXT |
+| caminho_arquivo | TEXT (path em referencias/irpf/) |
+
+`UNIQUE (ano_pagina, sha256)` — mesma versão não duplica.
+
+**Tabela `irpf_faixas`** — faixas da tabela progressiva mensal, por vigência
+
+| coluna | tipo |
+|--------|------|
+| id (PK) | INTEGER |
+| vigencia_inicio | TEXT (YYYY-MM-DD) |
+| vigencia_fim | TEXT ou NULL (vigente) |
+| ordem | INTEGER (1..5) |
+| base_de | REAL |
+| base_ate | REAL ou NULL (última faixa) |
+| aliquota | REAL (pontos percentuais, ex.: 7.5) |
+| deducao | REAL (parcela a deduzir, R$) |
+| publicacao_id | INTEGER → irpf_publicacoes.id |
+
+`UNIQUE (vigencia_inicio, ordem)` — uma linha por faixa em cada vigência.
+
 ## Motor de cálculo (Fase 5)
 
 O pacote `src/calculo/` calcula o **Valor de Face Bruto** de um precatório federal, reconstruindo o saldo ao longo do tempo a partir dos índices já ingeridos.
@@ -395,6 +455,48 @@ Datas derivadas do **ano orçamentário** (`src/calculo/modelo.py`):
 
 Para acrescentar um tipo de ativo, adicione um perfil em `src/calculo/perfis.py` — o motor é genérico e não precisa ser alterado.
 
+### Valor de Face Líquido
+
+`src/calculo/liquido.py` parte do VF Bruto e aplica os descontos:
+
+```python
+from src.calculo import liquido
+
+with db.conectar() as conn:
+    bruto = motor.calcular_vf_bruto(conn, premissas)
+    r = liquido.calcular_vf_liquido(conn, bruto, premissas)
+
+r.vf_bruto        # montante global (principal + juros + selic)
+r.impostos        # PSS + IR-RRA + IRRF
+r.vf_liquido      # VF Bruto - impostos (sem honorários)
+r.total_cedivel   # VF Líquido - honorários
+r.total_share     # Total Cedível × percentual do ativo
+r.descontos       # auditoria: base, alíquota e valor de cada desconto
+```
+
+A cascata:
+
+```
+VF BRUTO
+(-) impostos          duas trilhas mutuamente exclusivas (ver abaixo)
+(=) VF LÍQUIDO
+(-) honorários        base: bruto se destacados, líquido se não
+(=) TOTAL CEDÍVEL
+(×) share do ativo
+```
+
+**Duas trilhas tributárias, definidas pelo tipo de verba:**
+
+| Perfil | Impostos aplicados |
+|--------|--------------------|
+| `federal_servidores` (verba remuneratória) | **PSS** (% sobre o principal corrigido) + **IR-RRA** |
+| Todos os demais | **IRRF de 3%** sobre o montante global (art. 27 da Lei 10.833/2003, sem deduções) |
+
+- **PSS** — alíquota informada caso a caso, via `pss_percentual` (fração) **ou** `pss_valor` (R$ da conta na data base, do qual a alíquota é derivada). Incide só sobre o principal.
+- **IR-RRA** — `nº_meses × (base_mensal × alíquota − dedução)`, com `base_mensal = (principal − PSS) / nº_meses`, usando a tabela do IRPF vigente. Os juros não entram na base. A isenção da Lei 15.191/2025 não se aplica (rendimento recebido acumuladamente).
+- **IRRF 3%** — `aliquota_imposto` permite sobrepor a alíquota legal quando necessário.
+- **Honorários** — `honorarios_percentual`, com a base definida por `destacamento_honorarios`.
+
 ### Precisão
 
 Todo o motor opera em `Decimal` (nunca `float`), lendo os valores do banco como `Decimal(str(valor))`, para não acumular erro de ponto flutuante nas multiplicações encadeadas de fatores.
@@ -433,8 +535,9 @@ Isso evita o acúmulo de erros de ponto flutuante em séries longas — fundamen
 2. ✅ Ingestão de Tabelas Práticas do TJSP (EC 113/2021)
 3. ✅ Ingestão mensal das Tabelas CJF — SICOM (TCM + VHI × 6 categorias)
 4. ✅ Importação estática das Tabelas de Juros de Mora (3 categorias, base histórica)
-5. 🔄 Motor de cálculo — Valor de Face Bruto dos 6 tipos de precatório federal (concluído);
-   pendentes: curva mensal, camada de valor líquido (PSS/IR-RRA/imposto) e persistência
-6. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
-7. ⏭️ Precatórios estaduais (servidores, desapropriação, tributário, genéricos)
-8. ⏭️ Definir usuários finais e segurança/auditoria
+5. ✅ Ingestão semestral da Tabela Progressiva Mensal do IRPF (com histórico de vigências)
+6. 🔄 Motor de cálculo — Valor de Face **Bruto** e **Líquido** dos 6 tipos de precatório
+   federal (concluídos); pendentes: curva mensal e persistência das curvas
+7. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
+8. ⏭️ Precatórios estaduais (servidores, desapropriação, tributário, genéricos)
+9. ⏭️ Definir usuários finais e segurança/auditoria

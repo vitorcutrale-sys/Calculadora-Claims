@@ -171,6 +171,45 @@ CREATE TABLE IF NOT EXISTS juros_fatores (
 
 CREATE INDEX IF NOT EXISTS idx_juros_fatores_anomes
     ON juros_fatores(tabela_chave, ano, mes);
+
+-- ---------------------------------------------------------------- --
+-- Tabela Progressiva Mensal do IRPF (Receita Federal)              --
+-- ---------------------------------------------------------------- --
+-- Coleta ANUAL da página do ano-calendário. Cada página pode conter
+-- mais de uma vigência (a tabela muda no meio do ano em alguns anos).
+CREATE TABLE IF NOT EXISTS irpf_publicacoes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ano_pagina      INTEGER NOT NULL,   -- ano-calendário da página de origem
+    fonte_url       TEXT NOT NULL,
+    data_coleta     TEXT NOT NULL,
+    sha256          TEXT NOT NULL,
+    caminho_arquivo TEXT NOT NULL,      -- HTML arquivado em referencias/irpf/
+    UNIQUE (ano_pagina, sha256)
+);
+
+-- Faixas da tabela mensal, por vigência.
+-- `aliquota` é gravada COMO PUBLICADA, em pontos percentuais (7.5 = 7,5%),
+-- seguindo o mesmo padrão das séries BACEN em `observacoes`; a conversão
+-- para fração é feita na camada de cálculo.
+-- `base_ate` NULL = última faixa (sem teto).
+-- `vigencia_fim` NULL = vigente por prazo indeterminado.
+CREATE TABLE IF NOT EXISTS irpf_faixas (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    vigencia_inicio TEXT NOT NULL,      -- YYYY-MM-DD
+    vigencia_fim    TEXT,               -- YYYY-MM-DD ou NULL
+    ordem           INTEGER NOT NULL,   -- 1..5
+    base_de         REAL NOT NULL,
+    base_ate        REAL,
+    aliquota        REAL NOT NULL,      -- pontos percentuais
+    deducao         REAL NOT NULL,      -- parcela a deduzir (R$)
+    publicacao_id   INTEGER NOT NULL,
+    atualizado_em   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (vigencia_inicio, ordem),
+    FOREIGN KEY (publicacao_id) REFERENCES irpf_publicacoes(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_irpf_faixas_vigencia
+    ON irpf_faixas(vigencia_inicio, ordem);
 """
 
 
@@ -598,6 +637,132 @@ def resumo_juros(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         FROM juros_fatores
         GROUP BY tabela_chave
         ORDER BY tabela_chave
+        """
+    )
+    return cur.fetchall()
+
+
+# ------------------------------------------------------------------ #
+# IRPF — Tabela Progressiva Mensal                                    #
+# ------------------------------------------------------------------ #
+def ultimo_sha256_irpf(conn: sqlite3.Connection, ano_pagina: int) -> Optional[str]:
+    """SHA-256 da última coleta da página daquele ano."""
+    cur = conn.execute(
+        """
+        SELECT sha256 FROM irpf_publicacoes
+         WHERE ano_pagina = ?
+         ORDER BY id DESC LIMIT 1
+        """,
+        (ano_pagina,),
+    )
+    row = cur.fetchone()
+    return row["sha256"] if row else None
+
+
+def registrar_publicacao_irpf(
+    conn: sqlite3.Connection,
+    ano_pagina: int,
+    fonte_url: str,
+    sha256: str,
+    caminho_arquivo: str,
+) -> int:
+    """Insere registro de publicação do IRPF e retorna seu id."""
+    cur = conn.execute(
+        """
+        INSERT INTO irpf_publicacoes
+            (ano_pagina, fonte_url, data_coleta, sha256, caminho_arquivo)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            ano_pagina,
+            fonte_url,
+            datetime.now().isoformat(timespec="seconds"),
+            sha256,
+            caminho_arquivo,
+        ),
+    )
+    return cur.lastrowid
+
+
+def upsert_faixas_irpf(
+    conn: sqlite3.Connection,
+    publicacao_id: int,
+    tabelas: Iterable,
+) -> int:
+    """
+    Insere ou atualiza as faixas de cada tabela (objetos irpf.TabelaIRPF).
+
+    Retorna a quantidade de linhas afetadas. UNIQUE(vigencia_inicio, ordem)
+    garante idempotência: recoletar a mesma página não duplica.
+    """
+    afetadas = 0
+    for tabela in tabelas:
+        vig_ini = tabela.vigencia_inicio.isoformat()
+        vig_fim = tabela.vigencia_fim.isoformat() if tabela.vigencia_fim else None
+        for f in tabela.faixas:
+            cur = conn.execute(
+                """
+                INSERT INTO irpf_faixas
+                    (vigencia_inicio, vigencia_fim, ordem, base_de, base_ate,
+                     aliquota, deducao, publicacao_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(vigencia_inicio, ordem) DO UPDATE SET
+                    vigencia_fim  = excluded.vigencia_fim,
+                    base_de       = excluded.base_de,
+                    base_ate      = excluded.base_ate,
+                    aliquota      = excluded.aliquota,
+                    deducao       = excluded.deducao,
+                    publicacao_id = excluded.publicacao_id,
+                    atualizado_em = datetime('now')
+                WHERE irpf_faixas.base_de   != excluded.base_de
+                   OR irpf_faixas.aliquota  != excluded.aliquota
+                   OR irpf_faixas.deducao   != excluded.deducao
+                   OR IFNULL(irpf_faixas.base_ate, -1) != IFNULL(excluded.base_ate, -1)
+                """,
+                (
+                    vig_ini, vig_fim, f.ordem, f.base_de, f.base_ate,
+                    f.aliquota, f.deducao, publicacao_id,
+                ),
+            )
+            if cur.rowcount == 1:
+                afetadas += 1
+    return afetadas
+
+
+def tabela_irpf_vigente(
+    conn: sqlite3.Connection, quando: str
+) -> list[sqlite3.Row]:
+    """
+    Faixas da tabela mensal vigente na data `quando` (ISO YYYY-MM-DD).
+
+    Escolhe a vigência mais recente que já começou até essa data.
+    """
+    cur = conn.execute(
+        """
+        SELECT * FROM irpf_faixas
+         WHERE vigencia_inicio = (
+                 SELECT MAX(vigencia_inicio) FROM irpf_faixas
+                  WHERE vigencia_inicio <= ?
+               )
+         ORDER BY ordem
+        """,
+        (quando,),
+    )
+    return cur.fetchall()
+
+
+def resumo_irpf(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Resumo por vigência: nº de faixas e limite de isenção."""
+    cur = conn.execute(
+        """
+        SELECT
+            vigencia_inicio,
+            vigencia_fim,
+            COUNT(*)                                  AS n_faixas,
+            MAX(CASE WHEN ordem = 1 THEN base_ate END) AS isencao_ate
+        FROM irpf_faixas
+        GROUP BY vigencia_inicio, vigencia_fim
+        ORDER BY vigencia_inicio
         """
     )
     return cur.fetchall()

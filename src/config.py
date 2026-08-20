@@ -30,6 +30,7 @@ REFERENCIAS_DIR = BASE_DIR / "referencias"
 TJSP_REFERENCIAS_DIR = REFERENCIAS_DIR / "tjsp"
 CJF_REFERENCIAS_DIR = REFERENCIAS_DIR / "cjf"
 JUROS_REFERENCIAS_DIR = REFERENCIAS_DIR / "juros"
+IRPF_REFERENCIAS_DIR = REFERENCIAS_DIR / "irpf"
 
 # ------------------------------------------------------------------ #
 # Catálogo de séries do BACEN SGS                                     #
@@ -251,6 +252,38 @@ JUROS_FONTE_DIR = JUROS_REFERENCIAS_DIR
 
 # Data de referência comum a todas as tabelas (acumulado até este mês).
 JUROS_DATA_REFERENCIA = "2021-12"
+
+# ------------------------------------------------------------------ #
+# Parâmetros do IRPF (Tabela Progressiva Mensal — Receita Federal)    #
+# ------------------------------------------------------------------ #
+# A Receita publica uma página por ano-calendário com várias tabelas
+# (incidência mensal, redução mensal, incidência anual, capital, PLR).
+# Coletamos APENAS a Tabela de Incidência MENSAL — é a usada no IR-RRA
+# (tabela do mês do recebimento × número de meses).
+#
+# A página não usa <table> HTML: é texto estruturado em blocos
+#     <vigência> / "Base de cálculo" / "Alíquota" / "Dedução" / 5×(3 linhas)
+# Uma mesma página pode conter MAIS DE UMA vigência (ex.: 2025 traz
+# "a partir de maio de 2025" e "de janeiro a abril de 2025").
+#
+# A URL não é perfeitamente estável entre anos — daí a lista de padrões
+# candidatos, testados em ordem.
+IRPF_BASE_URL = (
+    "https://www.gov.br/receitafederal/pt-br/assuntos/"
+    "meu-imposto-de-renda/tabelas"
+)
+IRPF_URL_PADROES = ("{base}/{ano}", "{base}/copy_of_{ano}")
+
+# Validação estrita do parser: a tabela mensal tem exatamente 5 faixas,
+# com estas alíquotas (a 1ª é isenta). Se a página mudar de forma, a
+# coleta falha com erro claro em vez de gravar número errado.
+IRPF_ALIQUOTAS_ESPERADAS = (0.0, 7.5, 15.0, 22.5, 27.5)
+IRPF_QTD_FAIXAS = 5
+
+# Teto para distinguir a tabela MENSAL da ANUAL na mesma página: o 1º
+# limite mensal fica na casa dos milhares; o anual, das dezenas de
+# milhares (12×). Valor bem acima do mensal e bem abaixo do anual.
+IRPF_LIMITE_MAX_MENSAL = 20_000.0
 
 JUROS_TABELAS = {
     "JUROS_SERVIDOR": {

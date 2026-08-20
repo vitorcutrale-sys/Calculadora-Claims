@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from . import bacen, cjf, config, db, juros, tjsp
+from . import bacen, cjf, config, db, irpf, juros, tjsp
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +283,67 @@ def coletar_cjf(mes: int = 0, ano: int = 0) -> dict:
             logger.exception("Falha ao processar tabela CJF %s.", chave)
             estatisticas["tabelas_com_erro"] += 1
             estatisticas["erros"].append(f"{chave}: {e}")
+
+    return estatisticas
+
+
+# ------------------------------------------------------------------ #
+# Coleta IRPF (anual)                                                 #
+# ------------------------------------------------------------------ #
+def coletar_irpf(ano: int = 0) -> dict:
+    """
+    Coleta a Tabela Progressiva Mensal do IRPF da página do ano informado
+    (padrão: ano corrente).
+
+    Cadência ANUAL: a tabela muda por lei, normalmente uma vez ao ano —
+    mas a página pode trazer mais de uma vigência (ex.: 2025 tem
+    "jan a abr" e "a partir de maio"). Todas são gravadas.
+
+    SHA-256 evita reprocessar quando a página não mudou.
+    """
+    db.inicializar_schema()
+
+    ano_ref = ano or date.today().year
+
+    estatisticas = {
+        "ano_pagina": ano_ref,
+        "tabelas_encontradas": 0,
+        "faixas_atualizadas": 0,
+        "pagina_inalterada": False,
+        "erros": [],
+    }
+
+    try:
+        with db.conectar() as conn:
+            sha_anterior = db.ultimo_sha256_irpf(conn, ano_ref)
+
+        resultado = irpf.coletar_ano(ano_ref, sha256_anterior=sha_anterior)
+
+        if not resultado.mudou:
+            estatisticas["pagina_inalterada"] = True
+            logger.info("IRPF %d: sem mudança desde a última coleta.", ano_ref)
+            return estatisticas
+
+        with db.conectar() as conn:
+            pub_id = db.registrar_publicacao_irpf(
+                conn,
+                ano_pagina=ano_ref,
+                fonte_url=resultado.url,
+                sha256=resultado.sha256,
+                caminho_arquivo=str(resultado.caminho_arquivo),
+            )
+            afetadas = db.upsert_faixas_irpf(conn, pub_id, resultado.tabelas)
+
+        estatisticas["tabelas_encontradas"] = len(resultado.tabelas)
+        estatisticas["faixas_atualizadas"] = afetadas
+        logger.info(
+            "IRPF %d: %d tabela(s), %d faixa(s) atualizada(s) (publicação %d).",
+            ano_ref, len(resultado.tabelas), afetadas, pub_id,
+        )
+
+    except Exception as e:
+        logger.exception("Falha na coleta do IRPF (ano %d).", ano_ref)
+        estatisticas["erros"].append(str(e))
 
     return estatisticas
 

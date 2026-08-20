@@ -35,6 +35,21 @@ CORTE_EC136 = date(2025, 7, 31)     # fim do R2 / início do R3 (EC 136)
 JUROS_EC136_AA = Decimal("0.02")
 
 # ------------------------------------------------------------------ #
+# Tributação na camada de valor líquido                               #
+# ------------------------------------------------------------------ #
+# Duas camadas mutuamente exclusivas, definidas pelo tipo de verba:
+#
+#   perfil com `verba_remuneratoria: True`  -> PSS + IR-RRA
+#       (verba ligada à remuneração de servidor; PSS sobre o principal e
+#        IR-RRA pela tabela progressiva mensal)
+#
+#   demais perfis                            -> IRRF de 3% sobre o global
+#       (art. 27 da Lei 10.833/2003: nos pagamentos de precatório ou RPV da
+#        Justiça Federal, a instituição financeira retém 3% sobre o montante
+#        pago, SEM quaisquer deduções)
+IRRF_PRECATORIO_FEDERAL = Decimal("0.03")
+
+# ------------------------------------------------------------------ #
 # Juros COMPENSATÓRIOS — desapropriação                               #
 # ------------------------------------------------------------------ #
 # Aplicáveis quando o precatório ainda NÃO foi expedido. Incidem sobre o
@@ -67,6 +82,9 @@ PERFIS = {
         # Tabelas do R1 lidas pelo motor (correção monetária + juros de mora).
         "r1_correcao": "TCM_3",          # SICOM servidores (IPCA-E), referência dez/2021
         "r1_juros": "JUROS_SERVIDOR",    # Tabela de Juros de Mora - servidores
+        # Verba de natureza remuneratória -> sujeita aos descontos de PSS e
+        # IR-RRA na camada de valor líquido (ver src/calculo/liquido.py).
+        "verba_remuneratoria": True,
         # Os três regimes, em ordem cronológica. O motor encadeia o saldo.
         "regimes": [
             {

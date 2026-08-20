@@ -2,7 +2,7 @@
 
 Este documento é o registro narrativo do que foi construído, por que foi construído daquela forma, e o que aprendemos ao longo do caminho. Diferente do `README.md` (que documenta o **estado atual** do projeto para quem chega novo), este arquivo conta a **história** do desenvolvimento.
 
-Última atualização: **2026-07-29**.
+Última atualização: **2026-08-20**.
 
 ---
 
@@ -17,8 +17,9 @@ Este documento é o registro narrativo do que foi construído, por que foi const
 7. [Fase 3 — Ingestão das Tabelas CJF (Justiça Federal)](#7-fase-3--ingestão-das-tabelas-cjf-justiça-federal)
 8. [Fase 4 — Importação das Tabelas de Juros de Mora](#8-fase-4--importação-das-tabelas-de-juros-de-mora)
 9. [Fase 5 — Motor de cálculo do Valor de Face](#9-fase-5--motor-de-cálculo-do-valor-de-face)
-10. [Estado atual do projeto](#10-estado-atual-do-projeto)
-11. [Próximas fases](#11-próximas-fases)
+10. [Fase 5.1 — IRPF e a camada de valor líquido](#10-fase-51--irpf-e-a-camada-de-valor-líquido)
+11. [Estado atual do projeto](#11-estado-atual-do-projeto)
+12. [Próximas fases](#12-próximas-fases)
 
 ---
 
@@ -374,7 +375,42 @@ Com ela, o R3 ganhou **dois modos de juros**: precatórios de **LOA ≥ 2027** u
 
 O caso de referência (LOA 2016, valor as-of a expedição em 07/2015) reproduziu o resultado da planilha **com diferença de R$ 0,00**, com o motor montando os quatro segmentos sozinho a partir de apenas `data_base` + `ano_orcamento`. Também mapeamos empiricamente todas as combinações de posição da janela de graça (`R_graça → R2 → R3`, `R1 → R_graça → R1 → R2 → R3`, `R1 → R2 → R3 → R_graça`), incluindo o caso mais difícil — o R1 partido em dois pela graça.
 
-## 10. Estado atual do projeto
+## 10. Fase 5.1 — IRPF e a camada de valor líquido
+
+Com o Valor de Face Bruto fechado, a etapa seguinte foi transformá-lo no valor que efetivamente se recebe. Isso exigiu uma nova fonte de dados e o desenho da camada de descontos.
+
+### A quinta fonte: Tabela Progressiva Mensal do IRPF
+
+O IR-RRA precisa da tabela progressiva do imposto de renda, que não estava no projeto. Três descobertas moldaram a implementação:
+
+**1. A página não é tabular.** A Receita publica uma página por ano-calendário, mas os dados não vêm em `<table>` HTML — são blocos de texto na sequência `vigência / "Base de cálculo" / "Alíquota" / "Dedução" / 5×(3 linhas)`. O parser ancora nesse cabeçalho e lê as faixas em trincas.
+
+**2. "Anual" é a cadência, não o dado.** A tabela muda por lei, e mudou **no meio do ano** em 2024 (fevereiro) e 2025 (maio). Uma mesma página pode conter duas vigências ("a partir de maio de 2025" e "de janeiro a abril de 2025"). Por isso o modelo guarda `vigencia_inicio`/`vigencia_fim` em vez de "ano", e a consulta `tabela_irpf_vigente(conn, data)` resolve qual tabela aplicar. A rotina ficou **semestral** (15/01 e 15/07): janeiro pega a tabela do novo ano; julho pega mudanças no meio do ano.
+
+Um efeito bonito da idempotência por vigência: ao coletar a página de 2024, apenas 5 faixas foram gravadas em vez de 10 — a vigência de maio/2023 já tinha vindo da página de 2023.
+
+**3. Validação estrita é obrigatória em scraping.** Como a página é texto livre e tem várias tabelas (mensal, redução, anual, capital, PLR), o parser distingue a mensal da anual pela **magnitude** do primeiro limite e **exige** 5 faixas com alíquotas 0 / 7,5 / 15 / 22,5 / 27,5 e limites crescentes. Se a forma mudar, a coleta **falha com erro claro** apontando o HTML arquivado. Essa foi a lição do episódio VHI/TCM: melhor falhar alto que gravar número plausível e errado. Testamos os dois modos de quebra (página sem tabela; alíquota diferente) e ambos levantam exceção.
+
+A URL também não é estável entre anos (2024 fica em `/tabelas/copy_of_2024`), daí a lista de padrões candidatos testados em ordem.
+
+### A camada de valor líquido
+
+O ponto conceitual central: **os descontos não são iguais para todo precatório**. Existem duas trilhas tributárias mutuamente exclusivas, definidas pelo tipo de verba:
+
+- **Verba remuneratória** (hoje só `federal_servidores`, marcado com `verba_remuneratoria: True`): **PSS** + **IR-RRA**.
+- **Demais perfis**: **IRRF de 3%** sobre o montante global (art. 27 da Lei 10.833/2003 — retenção na fonte nos pagamentos de precatório da Justiça Federal, sem quaisquer deduções).
+
+Nunca se somam: se o perfil é de servidor, preservam-se PSS e IR-RRA; nos outros, aplicam-se os 3%.
+
+**PSS** incide apenas sobre o **principal corrigido** — não sobre juros nem sobre a parcela de Selic. A alíquota não é fixa (varia por caso) e pode entrar de duas formas: direto em percentual, ou como o **valor em R$** da conta na data base, do qual a alíquota é derivada (`pss_valor / valor_principal`) e então aplicada ao principal corrigido. As duas formas convergem para o mesmo resultado — o que a planilha-protótipo já fazia com fórmulas do tipo `=(868,99+145,54)/G27`.
+
+**IR-RRA** segue o art. 12-A da Lei 7.713/88: a base é o principal líquido de PSS dividido pelo número de meses a que o crédito se refere; sobre essa média mensal aplica-se a tabela progressiva; e o imposto é multiplicado de volta pelo número de meses. Os juros de mora não entram na base (natureza indenizatória). A isenção da Lei 15.191/2025 (rendimentos até R$ 5 mil) **não** se aplica, por se tratar de rendimento recebido acumuladamente.
+
+**Honorários** entram depois dos impostos, com a base definida pelo destacamento: se **destacados**, o percentual incide sobre o valor **bruto** (e os impostos também incidem sobre o bruto); se **não destacados**, incide sobre o valor **líquido dos impostos**. Por fim, o **percentual do ativo** (share) incide sobre o total cedível.
+
+O vocabulário do resultado espelha a planilha: `vf_liquido` é o bruto menos impostos (sem honorários), `total_cedivel` desconta os honorários e `total_share` aplica o share — assim cada etapa da cascata permanece inspecionável, e a lista `descontos` registra base, alíquota e valor de cada linha para auditoria.
+
+## 11. Estado atual do projeto
 
 ```
 Calculadora-Claims/
@@ -391,27 +427,31 @@ Calculadora-Claims/
 │   ├── tjsp.py                  Download + parser das tabelas TJSP (PDF)
 │   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
 │   ├── juros.py                 Importador estático das tabelas de Juros de Mora (PDF)
+│   ├── irpf.py                  Coleta + parser da Tabela Progressiva Mensal do IRPF
 │   ├── db.py                    Camada SQLite (schema completo + helpers)
-│   ├── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
+│   ├── coletor.py               Orquestrador (BACEN + TJSP + CJF + Juros + IRPF)
 │   └── calculo/                 Motor de cálculo (Fase 5)
 │       ├── modelo.py            Premissas do ativo + regras de datas da LOA
 │       ├── perfis.py            Receitas declarativas por tipo de ativo
 │       ├── indices.py           Leitores de índices em Decimal
-│       └── motor.py             Segmentador de regimes -> Valor de Face Bruto
+│       ├── motor.py             Segmentador de regimes -> Valor de Face Bruto
+│       └── liquido.py           Impostos, honorários e share -> Valor Líquido
 ├── data/
 │   └── claims.db                Banco SQLite com toda a base
 ├── referencias/
 │   ├── Tabela EC113.pdf         PDF original (validação manual)
 │   ├── tjsp/                    Versões arquivadas dos PDFs TJSP
 │   ├── cjf/                     Versões arquivadas dos XLS CJF
-│   └── juros/                   Cópias arquivadas dos PDFs de Juros de Mora
+│   ├── juros/                   Cópias arquivadas dos PDFs de Juros de Mora
+│   └── irpf/                    Páginas arquivadas da tabela do IRPF (HTML)
 └── logs/
     ├── coleta_AAAA-MM-DD.log    Logs estruturados do Python
     ├── agendador.log            Saída do wrapper diário
-    └── agendador_cjf.log        Saída do wrapper mensal CJF
+    ├── agendador_cjf.log        Saída do wrapper mensal CJF
+    └── agendador_irpf.log       Saída do wrapper semestral IRPF
 ```
 
-**Schema SQLite** (9 tabelas):
+**Schema SQLite** (11 tabelas):
 
 | Tabela | Conteúdo |
 |--------|----------|
@@ -424,17 +464,20 @@ Calculadora-Claims/
 | `cjf_fatores` | Coeficientes/valores extraídos das tabelas CJF |
 | `juros_publicacoes` | PDFs de Juros de Mora importados (com SHA-256) |
 | `juros_fatores` | Taxas de juros de mora acumuladas (em %) — 3 categorias × 687 |
+| `irpf_publicacoes` | Páginas do IRPF coletadas (com SHA-256) |
+| `irpf_faixas` | Faixas da tabela progressiva mensal, por vigência |
 
 **Dependências externas:**
-- `pdfplumber` (única) — para parsing dos PDFs TJSP e Juros de Mora; módulos BACEN e CJF usam apenas stdlib
+- `pdfplumber` (única) — para parsing dos PDFs TJSP e Juros de Mora; os módulos BACEN, CJF e IRPF usam apenas stdlib
 
 **Operação:**
 - Tarefa `CalculadoraClaims_ColetaIndicesBACEN` — roda diariamente às 13:00 (BACEN + TJSP)
 - Tarefa `CalculadoraClaims_ColetaCJF_Mensal` — roda todo dia 5 às 08:00 (CJF, 12 tabelas)
+- Tarefa `CalculadoraClaims_ColetaIRPF_Semestral` — roda 15/01 e 15/07 às 08:00 (IRPF)
 - Juros de Mora — **importação manual única** (`--importar-juros`), sem agendamento
-- Logs em `logs/coleta_AAAA-MM-DD.log`, `logs/agendador.log` e `logs/agendador_cjf.log`
+- Logs em `logs/coleta_AAAA-MM-DD.log` e nos `logs/agendador*.log`
 
-## 11. Próximas fases
+## 12. Próximas fases
 
 | # | Fase | Status |
 |---|------|--------|
@@ -443,14 +486,15 @@ Calculadora-Claims/
 | 3 | Ingestão CJF — SICOM (TCM + VHI × 6 categorias) | ✅ Concluído |
 | 4 | Importação estática das Tabelas de Juros de Mora (3 categorias) | ✅ Concluído |
 | 5 | Motor de cálculo — Valor de Face Bruto (6 perfis federais) | ✅ Concluído |
-| 5.1 | Curva mensal de valor de face | ⏭️ Próximo |
-| 5.2 | Camada de valor líquido (PSS, IR-RRA, imposto, % do ativo) | ⏭️ |
-| 5.3 | Persistência das curvas no banco | ⏭️ |
+| 5.1 | Ingestão semestral da Tabela do IRPF (com vigências) | ✅ Concluído |
+| 5.2 | Camada de valor líquido (PSS, IR-RRA, IRRF 3%, honorários, share) | ✅ Concluído |
+| 5.3 | Curva mensal de valor de face | ⏭️ Próximo |
+| 5.4 | Persistência das curvas no banco | ⏭️ |
 | 6 | Interface (CLI ou Streamlit) | ⏭️ |
 | 7 | Precatórios estaduais (servidores, desapropriação, tributários, genéricos) | ⏭️ |
 | 8 | Definição de usuários, segurança e auditoria | ⏭️ |
 
-O motor já entrega o **Valor de Face Bruto** auditável dos seis tipos de precatório federal. Os próximos passos naturais são: (a) expor a **curva mensal** — o valor de face em cada mês, que é o que se quer armazenar e exibir; (b) a **camada de valor líquido**, aplicando PSS, IR-RRA (tabela progressiva), imposto de alíquota fixa e o percentual do ativo, com o efeito do destacamento de honorários (base bruta ou líquida); e (c) **persistir** as curvas calculadas no banco, com auditoria de qual perfil e quais versões de tabela geraram cada número.
+O motor já entrega, para os seis tipos de precatório federal, o **Valor de Face Bruto** e o **Valor Líquido** completo — impostos nas duas trilhas, honorários com base condicional e o share do ativo —, tudo auditável linha a linha. Os próximos passos naturais são: (a) expor a **curva mensal**, com o valor de face de cada mês, que é o que se quer armazenar e exibir; e (b) **persistir** as curvas calculadas no banco, registrando qual perfil e quais versões de tabela geraram cada número.
 
 Depois disso, a atenção volta-se para os **precatórios estaduais**, que serão organizados em quatro classificações (ações de servidores, desapropriação, tributárias e genéricas) — onde as Tabelas Práticas do TJSP, já ingeridas na Fase 2, entram no lugar do SICOM.
 
