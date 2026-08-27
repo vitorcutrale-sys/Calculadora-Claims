@@ -7,6 +7,8 @@ Projeto para construir a base de dados de índices econômicos aplicáveis a pre
 - **CJF — SICOM** — Tabelas de Correção Monetária e Valores Históricos dos Indexadores do Conselho da Justiça Federal, para as 6 categorias de ação judicial, via formulário web mensal.
 - **Juros de Mora (estático)** — Tabelas históricas de juros de mora em condenações da Fazenda Pública (Servidores, Não Tributário e Tributário), importadas uma única vez a partir de PDFs locais. **Sem coleta periódica**: os juros deixaram de ser aplicados em 09/12/2021 (art. 3º da EC 113/2021).
 - **IRPF — Receita Federal** — Tabela Progressiva Mensal (faixa, alíquota, parcela a deduzir), coletada duas vezes por ano da página oficial, com histórico de **vigências** (a tabela muda por lei, às vezes no meio do ano). Usada no cálculo do IR-RRA.
+- **Poupança por aniversário (BACEN SGS 195)** — períodos de accrual mensal (início, fim e taxa), coletados na rotina diária. Remuneram precatórios **já depositados**.
+- **Feriados bancários (ANBIMA)** — lista oficial de feriados sem sensibilização das Reservas Bancárias, para a contagem de dias úteis (base 252) no pro-rata da poupança.
 
 O script Python baixa, persiste e mantém atualizado tudo em SQLite local, com auditoria por hash de cada versão dos arquivos baixados.
 
@@ -29,6 +31,7 @@ Calculadora-Claims/
 │   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
 │   ├── juros.py                 Importador estático das tabelas de Juros de Mora (PDF)
 │   ├── irpf.py                  Coleta + parser da Tabela Progressiva Mensal do IRPF
+│   ├── feriados.py              Coleta + parser dos feriados bancários (ANBIMA, .xls)
 │   ├── db.py                    Camada SQLite (BACEN + TJSP + CJF + Juros)
 │   ├── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
 │   └── calculo/                 Motor de cálculo (Fase 5)
@@ -36,6 +39,7 @@ Calculadora-Claims/
 │       ├── perfis.py            Receitas declarativas por tipo de ativo
 │       ├── indices.py           Leitores de índices em Decimal
 │       ├── motor.py             Segmentador de regimes -> Valor de Face Bruto
+│       ├── poupanca.py          Accrual de poupança de precatórios depositados
 │       └── liquido.py           Impostos, honorários e share -> Valor Líquido
 ├── data/
 │   └── claims.db                Banco SQLite (criado na 1ª execução)
@@ -149,13 +153,14 @@ A cadência é semestral (ver agendamento abaixo) — o SHA-256 garante que roda
 - Python 3.10 ou superior (verifique com `python --version`)
 - Conexão de internet (APIs BACEN e TJSP são públicas, sem autenticação)
 - Bibliotecas externas:
-  - `pdfplumber` — para extrair os fatores das tabelas em PDF do TJSP
+  - `pdfplumber` — extrai os fatores das tabelas em PDF (TJSP e Juros de Mora)
+  - `xlrd` — lê o `.xls` (BIFF8) de feriados bancários da ANBIMA
 
 ```cmd
-pip install pdfplumber
+pip install -r requirements.txt
 ```
 
-(O módulo BACEN continua usando apenas a stdlib; `pdfplumber` é necessário apenas para o módulo TJSP.)
+(Os módulos BACEN, CJF e IRPF usam apenas a stdlib.)
 
 ## Primeira execução (carga histórica completa)
 
@@ -194,6 +199,8 @@ python coletar_indices.py --so-cjf             # roda apenas a coleta CJF (mês 
 python coletar_indices.py --so-cjf --mes 5 --ano 2025  # CJF para mês/ano específico
 python coletar_indices.py --importar-juros     # importa as tabelas de Juros de Mora (estático)
 python coletar_indices.py --so-irpf            # coleta a Tabela Progressiva Mensal do IRPF
+python coletar_indices.py --so-poupanca        # poupança por aniversário (SGS 195)
+python coletar_indices.py --so-feriados        # feriados bancários (ANBIMA)
 ```
 
 > **Nota:** `--importar-juros` é uma operação estática e **não** faz parte da coleta padrão (`coletar_tudo`). Rode-a manualmente apenas quando precisar (re)importar os PDFs de juros.
@@ -230,7 +237,7 @@ schtasks /Delete /TN "CalculadoraClaims_ColetaCJF_Mensal" /F
 
 1. Clique com o botão direito em `agendar_irpf_semestral.bat`.
 2. Escolha **Executar como administrador**.
-3. Registra a tarefa `CalculadoraClaims_ColetaIRPF_Semestral` para rodar nos dias **15 de janeiro e 15 de julho às 08:00** — janeiro captura a tabela do novo ano-calendário; julho captura eventuais mudanças no meio do ano.
+3. Registra a tarefa `CalculadoraClaims_ColetaIRPF_Semestral` para rodar nos dias **15 de janeiro e 15 de julho às 08:00** — janeiro captura a tabela do novo ano-calendário; julho captura eventuais mudanças no meio do ano. O mesmo wrapper também atualiza os **feriados bancários** da ANBIMA.
 
 ```cmd
 schtasks /Query  /TN "CalculadoraClaims_ColetaIRPF_Semestral" /V /FO LIST
@@ -386,6 +393,22 @@ Registra início, fim, status (`success` / `partial` / `error`), contagens e men
 
 `UNIQUE (vigencia_inicio, ordem)` — uma linha por faixa em cada vigência.
 
+**Tabela `poupanca_periodos`** — períodos de aniversário da poupança (SGS 195)
+
+| coluna | tipo |
+|--------|------|
+| id (PK) | INTEGER |
+| data_inicio | TEXT (YYYY-MM-DD, dia de aniversário) |
+| data_fim | TEXT (fim do período — encadeia o próximo) |
+| taxa | REAL (% no período) |
+| coletada_em | TEXT |
+
+`UNIQUE (data_inicio)` — um período por dia de aniversário.
+
+**Tabelas `feriados_publicacoes` e `feriados`** — feriados bancários da ANBIMA
+
+`feriados` guarda `data` (`UNIQUE`), `dia_semana`, `descricao` e a FK da publicação; `feriados_publicacoes` registra cada versão do `.xls` baixada (com SHA-256 e caminho em `referencias/feriados/`).
+
 ## Motor de cálculo (Fase 5)
 
 O pacote `src/calculo/` calcula o **Valor de Face Bruto** de um precatório federal, reconstruindo o saldo ao longo do tempo a partir dos índices já ingeridos.
@@ -454,6 +477,32 @@ Datas derivadas do **ano orçamentário** (`src/calculo/modelo.py`):
 - `transito_antes_adi2332` — `True`: 1% a.m. em todo o R1; `False`: 1% a.m. até 10/06/1997 e 0,5% a.m. até nov/2021 (de dez/2021 em diante já estão embutidos na Selic / Taxa Legal).
 
 Para acrescentar um tipo de ativo, adicione um perfil em `src/calculo/perfis.py` — o motor é genérico e não precisa ser alterado.
+
+### Precatório depositado — poupança
+
+Depois de depositado, o precatório deixa de ser corrigido pelos regimes judiciais: o valor fica em conta poupança e rende por **aniversário mensal**. Dois inputs ativam esse caminho:
+
+```python
+premissas = PremissasAtivo(
+    ...,
+    precatorio_depositado=True,
+    data_deposito=date(2024, 3, 15),
+)
+```
+
+O motor então:
+
+1. Corrige pelos regimes judiciais **somente até a data do depósito**.
+2. Do depósito em diante, capitaliza cada **aniversário completo** encadeando os períodos da série 195 (o início do próximo período é o `data_fim` do anterior, informação que vem da própria fonte).
+3. No período em aberto, aplica **pro-rata em dias úteis base 252**, na convenção exponencial do mercado: `fator = (1 + taxa_mensal) ** (DU / 21)`. Num mês cheio (~21 DU) isso reproduz exatamente a taxa mensal. Os dias úteis excluem sábados, domingos e os feriados da ANBIMA, contados em `[último aniversário, data de cálculo)`.
+
+Nos precatórios **federais o depósito é feito pelo valor bruto** — os impostos, honorários e o share incidem depois, sobre o valor já acrescido de poupança. O fator da poupança é aplicado proporcionalmente aos três componentes, preservando a composição principal/juros/selic (que segue importando para PSS e IR-RRA).
+
+O `trace` ganha um segmento `POUPANCA` com o número de aniversários, o fator total e o detalhe de cada período — incluindo o pro-rata final com os dias úteis usados.
+
+**Regra dos dias 29 a 31:** a série 195 só publica dias de aniversário de 1 a 28. Depósitos feitos nos dias 29, 30 ou 31 têm aniversário no dia 1º do mês seguinte, e o trecho entre o depósito e esse dia 1º não é remunerado — como na prática bancária. O `trace` registra esse *stub*.
+
+A série cobre de **04/05/2012** (início da "nova poupança") em diante; um depósito anterior a essa data levanta erro explícito em vez de calcular errado.
 
 ### Valor de Face Líquido
 
@@ -536,8 +585,9 @@ Isso evita o acúmulo de erros de ponto flutuante em séries longas — fundamen
 3. ✅ Ingestão mensal das Tabelas CJF — SICOM (TCM + VHI × 6 categorias)
 4. ✅ Importação estática das Tabelas de Juros de Mora (3 categorias, base histórica)
 5. ✅ Ingestão semestral da Tabela Progressiva Mensal do IRPF (com histórico de vigências)
-6. 🔄 Motor de cálculo — Valor de Face **Bruto** e **Líquido** dos 6 tipos de precatório
-   federal (concluídos); pendentes: curva mensal e persistência das curvas
-7. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
-8. ⏭️ Precatórios estaduais (servidores, desapropriação, tributário, genéricos)
-9. ⏭️ Definir usuários finais e segurança/auditoria
+6. ✅ Ingestão da poupança por aniversário (SGS 195) e dos feriados bancários (ANBIMA)
+7. 🔄 Motor de cálculo — Valor de Face **Bruto**, **Líquido** e **poupança pós-depósito**
+   dos 6 tipos de precatório federal (concluídos); pendentes: curva mensal e persistência
+8. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
+9. ⏭️ Precatórios estaduais (servidores, desapropriação, tributário, genéricos)
+10. ⏭️ Definir usuários finais e segurança/auditoria

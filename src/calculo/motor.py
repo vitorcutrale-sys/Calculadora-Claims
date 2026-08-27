@@ -29,7 +29,7 @@ Tudo em Decimal.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 
@@ -185,6 +185,11 @@ def calcular_vf_bruto(
 
     perfil = obter_perfil(premissas.perfil)
 
+    # Precatório já DEPOSITADO: a correção judicial para na data do depósito e
+    # o valor passa a render poupança por aniversário até a data de cálculo.
+    if premissas.precatorio_depositado and premissas.data_deposito:
+        return _aplicar_deposito(conn, premissas, perfil, ate)
+
     # Perfis com regime próprio usam uma função dedicada (escape do segmentador).
     if perfil.get("motor") == "tributario":
         return _calcular_tributario(conn, premissas, perfil, ate)
@@ -278,6 +283,64 @@ def calcular_vf_bruto(
 
     res.principal, res.juros, res.selic = principal, juros, selic
     return res
+
+
+# ------------------------------------------------------------------ #
+# Precatório depositado: corrige até o depósito e rende poupança       #
+# ------------------------------------------------------------------ #
+def _aplicar_deposito(
+    conn: sqlite3.Connection,
+    premissas: PremissasAtivo,
+    perfil: dict,
+    ate: date | None = None,
+) -> ResultadoVF:
+    """
+    Fluxo do precatório já depositado:
+
+    1. Corrige pelos regimes judiciais SOMENTE até a data do depósito.
+    2. Do depósito até a data de cálculo, rende poupança por aniversário
+       mensal (com pro-rata em dias úteis base 252 no período em aberto).
+
+    Nos federais o depósito é feito pelo valor BRUTO, então a poupança
+    incide sobre o saldo bruto. O fator é aplicado proporcionalmente aos
+    três componentes, preservando a composição principal/juros/selic —
+    que segue importando para PSS e IR-RRA na camada de valor líquido.
+    """
+    from . import poupanca as _poupanca
+
+    deposito = premissas.data_deposito
+    data_calculo = ate or date.today()
+
+    # Etapa 1 — correção judicial até o depósito.
+    premissas_ate_deposito = replace(
+        premissas, precatorio_depositado=False, data_deposito=None
+    )
+    if perfil.get("motor") == "tributario":
+        base = _calcular_tributario(conn, premissas_ate_deposito, perfil, deposito)
+    else:
+        base = calcular_vf_bruto(conn, premissas_ate_deposito, ate=deposito)
+
+    # Etapa 2 — poupança do depósito até a data de cálculo.
+    res_poup = _poupanca.acumular(conn, base.saldo, deposito, data_calculo)
+    fator = res_poup.fator
+
+    principal = base.principal * fator
+    juros = base.juros * fator
+    selic = base.selic * fator
+
+    trace = list(base.trace)
+    trace.append({
+        "regime": "POUPANCA",
+        "de": f"{deposito:%Y-%m}",
+        "ate": f"{data_calculo:%Y-%m}",
+        "data_deposito": deposito.isoformat(),
+        "aniversarios": res_poup.aniversarios,
+        "fator": fator,
+        "saldo": principal + juros + selic,
+        "detalhe": res_poup.trace,
+    })
+
+    return ResultadoVF(principal, juros, selic, data_calculo, trace)
 
 
 # ------------------------------------------------------------------ #

@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Optional
 
 
 # ------------------------------------------------------------------ #
@@ -121,6 +122,13 @@ class PremissasAtivo:
                                        0,5% a.m. simples de 11/06/1997 a nov/2021
                                        (de dez/2021 em diante já embutidos na
                                        Selic / Taxa Legal — sem taxa adicional)
+        precatorio_depositado : o valor do precatório já foi depositado?
+                            Quando True, a correção pelos regimes judiciais
+                            PARA na data do depósito e o valor passa a render
+                            poupança por aniversário mensal (nos federais o
+                            depósito é feito pelo valor BRUTO).
+        data_deposito     : data do efetivo depósito. Obrigatória quando
+                            `precatorio_depositado=True`.
         perfil            : chave do perfil em perfis.PERFIS (default bloco 1)
     """
 
@@ -137,6 +145,8 @@ class PremissasAtivo:
     destacamento_honorarios: bool = True
     precatorio_expedido: bool = True
     transito_antes_adi2332: bool = False
+    precatorio_depositado: bool = False
+    data_deposito: Optional[date] = None
     perfil: str = "federal_servidores"
 
     # ---- propriedades derivadas ---- #
@@ -215,6 +225,16 @@ class PremissasAtivo:
             raise ValueError(
                 "honorarios_percentual deve estar entre 0 e 1 (fração)."
             )
+        if self.precatorio_depositado:
+            if self.data_deposito is None:
+                raise ValueError(
+                    "data_deposito é obrigatória quando precatorio_depositado=True."
+                )
+            if self.data_deposito < self.data_base:
+                raise ValueError(
+                    f"data_deposito ({self.data_deposito}) é anterior à data base "
+                    f"({self.data_base})."
+                )
         # Obs.: a data base pode coincidir com o início da graça (valor "as of"
         # a expedição) ou ser anterior a ela (crédito avaliado na origem). Por
         # isso NÃO exigimos data_base <= expedição.

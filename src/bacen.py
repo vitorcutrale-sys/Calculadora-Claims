@@ -240,3 +240,87 @@ def baixar_serie(
         janelas_404,
     )
     return deduplicadas
+
+
+def baixar_serie_com_data_fim(
+    codigo: int,
+    data_inicio_br: Optional[str] = None,
+    data_fim_br: Optional[str] = None,
+) -> list[tuple[str, str, float]]:
+    """
+    Variante de `baixar_serie` para séries em que cada registro é um
+    PERÍODO — o SGS devolve, além de `data` e `valor`, um `dataFim`.
+
+    É o caso da poupança por data de aniversário (série 195):
+
+        {"data": "26/08/2026", "dataFim": "26/09/2026", "valor": "0.6718"}
+
+    Retorna lista de tuplas (data_inicio_iso, data_fim_iso, valor),
+    ordenada por data de início e sem duplicidades. Registros sem
+    `dataFim` são ignorados com aviso — sinal de que a série não tem essa
+    natureza e deveria usar `baixar_serie`.
+    """
+    inicio = data_inicio_br or config.DATA_HISTORICO_INICIAL
+    periodos: list[tuple[str, str, float]] = []
+    janelas_ok = 0
+    janelas_404 = 0
+
+    for ini, fim in gerar_janelas(inicio, data_fim_br):
+        url = _montar_url(codigo, ini, fim)
+        logger.info("Série %d: baixando %s → %s", codigo, ini, fim)
+        try:
+            dados = _requisitar(url)
+        except urllib.error.HTTPError as e:
+            if e.code in (400, 404):
+                logger.warning(
+                    "Série %d: janela %s → %s sem dados (HTTP %d). "
+                    "Continuando para a próxima janela.",
+                    codigo, ini, fim, e.code,
+                )
+                janelas_404 += 1
+                continue
+            raise
+
+        janelas_ok += 1
+        for item in dados:
+            try:
+                if not item.get("dataFim"):
+                    logger.warning(
+                        "Série %d: registro sem dataFim %r — ignorado.", codigo, item
+                    )
+                    continue
+                periodos.append(
+                    (
+                        br_para_iso(item["data"]),
+                        br_para_iso(item["dataFim"]),
+                        float(item["valor"]),
+                    )
+                )
+            except (KeyError, ValueError) as e:
+                logger.warning(
+                    "Série %d: ignorando registro inválido %r (%s)", codigo, item, e
+                )
+
+    if janelas_ok == 0 and janelas_404 > 0:
+        raise RuntimeError(
+            f"Série {codigo}: todas as {janelas_404} janelas retornaram 404. "
+            f"Confirme o código em https://www3.bcb.gov.br/sgspub."
+        )
+
+    periodos.sort(key=lambda x: x[0])
+    vistos: set[str] = set()
+    deduplicados: list[tuple[str, str, float]] = []
+    for data_ini, data_fim, valor in periodos:
+        if data_ini in vistos:
+            continue
+        vistos.add(data_ini)
+        deduplicados.append((data_ini, data_fim, valor))
+
+    logger.info(
+        "Série %d: %d períodos baixados (%s → %s).",
+        codigo,
+        len(deduplicados),
+        deduplicados[0][0] if deduplicados else "-",
+        deduplicados[-1][0] if deduplicados else "-",
+    )
+    return deduplicados

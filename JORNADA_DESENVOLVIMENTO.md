@@ -2,7 +2,7 @@
 
 Este documento é o registro narrativo do que foi construído, por que foi construído daquela forma, e o que aprendemos ao longo do caminho. Diferente do `README.md` (que documenta o **estado atual** do projeto para quem chega novo), este arquivo conta a **história** do desenvolvimento.
 
-Última atualização: **2026-08-20**.
+Última atualização: **2026-08-27**.
 
 ---
 
@@ -18,8 +18,9 @@ Este documento é o registro narrativo do que foi construído, por que foi const
 8. [Fase 4 — Importação das Tabelas de Juros de Mora](#8-fase-4--importação-das-tabelas-de-juros-de-mora)
 9. [Fase 5 — Motor de cálculo do Valor de Face](#9-fase-5--motor-de-cálculo-do-valor-de-face)
 10. [Fase 5.1 — IRPF e a camada de valor líquido](#10-fase-51--irpf-e-a-camada-de-valor-líquido)
-11. [Estado atual do projeto](#11-estado-atual-do-projeto)
-12. [Próximas fases](#12-próximas-fases)
+11. [Fase 5.2 — O precatório depositado e a poupança](#11-fase-52--o-precatório-depositado-e-a-poupança)
+12. [Estado atual do projeto](#12-estado-atual-do-projeto)
+13. [Próximas fases](#13-próximas-fases)
 
 ---
 
@@ -410,7 +411,51 @@ Nunca se somam: se o perfil é de servidor, preservam-se PSS e IR-RRA; nos outro
 
 O vocabulário do resultado espelha a planilha: `vf_liquido` é o bruto menos impostos (sem honorários), `total_cedivel` desconta os honorários e `total_share` aplica o share — assim cada etapa da cascata permanece inspecionável, e a lista `descontos` registra base, alíquota e valor de cada linha para auditoria.
 
-## 11. Estado atual do projeto
+## 11. Fase 5.2 — O precatório depositado e a poupança
+
+Até aqui o motor ignorava uma etapa da vida do ativo: o **depósito**. Precatórios pagos são depositados em conta poupança, e a partir daí o valor não segue mais os regimes judiciais — rende como qualquer poupança, por aniversário mensal.
+
+### Uma série do SGS com um campo a mais
+
+A fonte é a série **195** do BACEN. Duas descobertas na investigação:
+
+**1. Ela devolve um terceiro campo.** Diferente de todas as outras séries que já usávamos, a 195 traz `dataFim`:
+
+```json
+{"data": "26/08/2026", "dataFim": "26/09/2026", "valor": "0.6718"}
+```
+
+Cada registro é um **período de accrual**: o dia de aniversário, o dia em que aquele mês fecha, e a taxa do período. Isso é exatamente o encadeamento que o cálculo precisa — o início do próximo período é o `dataFim` do anterior, e a própria fonte informa isso. Nosso `bacen.py` descartava esse campo, então ganhou uma variante (`baixar_serie_com_data_fim`) e a série ganhou tabela própria (`poupanca_periodos`), em vez de entrar em `observacoes` como par data/valor.
+
+**2. A série só tem dias 1 a 28.** Não é lacuna: poupança não tem aniversário nos dias 29, 30 e 31 — esses depósitos aniversariam no dia 1º do mês seguinte, e o trecho entre o depósito e esse dia 1º não rende nada. O motor implementa essa regra e registra o *stub* no trace.
+
+A cobertura começa em **04/05/2012**, data em que a "nova poupança" entrou em vigor. Um depósito anterior a isso levanta erro explícito, em vez de calcular com dados que não existem.
+
+### Feriados bancários: a primeira dependência binária
+
+O pro-rata do período em aberto é em **dias úteis, base 252** — o que exige a lista de feriados bancários. A ANBIMA é a fonte canônica, e aqui houve uma diferença importante em relação ao CJF: o "XLS" do CJF era HTML disfarçado, parseável com regex; o da ANBIMA é um **.xls BIFF8 de verdade** (documento OLE2, começa com `\xd0\xcf\x11\xe0`). A página HTML da ANBIMA não contém as datas — só o link para o arquivo.
+
+Não há como ler BIFF8 com a stdlib, então entrou a segunda dependência do projeto: `xlrd` (que na versão 2.x lê exatamente e apenas `.xls`). O parser aproveita um detalhe elegante do formato: as linhas de dados têm a primeira célula como **data do Excel** (`XL_CELL_DATE`), enquanto as notas de rodapé são texto — filtrar por tipo de célula separa os dois sem heurística frágil. Vieram **1.263 feriados, de 2001 a 2099**, e a própria planilha documenta o critério: "os feriados em que não há sensibilização das Reservas Bancárias".
+
+### A convenção do pro-rata
+
+Confirmada a convenção exponencial do mercado brasileiro:
+
+```
+fator = (1 + taxa_mensal) ** (DU / 21)        # 21 = 252/12
+```
+
+Ela é consistente por construção: num mês cheio (~21 dias úteis) o expoente vira 1 e o fator reproduz exatamente a taxa mensal. Os dias úteis são contados em `[último aniversário, data de cálculo)`, excluindo fins de semana e os feriados da ANBIMA.
+
+### Onde o depósito entra no fluxo
+
+O depósito **interrompe** a régua judicial. O motor passou a ter um desvio no topo: se o ativo está depositado, ele corrige pelos regimes só até a data do depósito e, dali em diante, aplica a poupança. Nos federais o depósito é feito pelo **valor bruto**, então a poupança rende sobre o saldo bruto e os impostos, honorários e share incidem depois, sobre o valor já acrescido.
+
+O fator da poupança é aplicado proporcionalmente aos três componentes (principal, juros, selic), preservando a composição — que continua importando, porque PSS e IR-RRA incidem sobre o principal.
+
+Uma observação de negócio que apareceu no primeiro teste: um ativo depositado em 03/2024 vale **mais** hoje do que o mesmo ativo não depositado (R$ 674,6M contra R$ 653,4M). Não é bug — a poupança (~7,4% a.a.) rendeu acima do regime da EC 136 (IPCA + 2% a.a.) no período. O depósito, nesse cenário, foi favorável ao credor.
+
+## 12. Estado atual do projeto
 
 ```
 Calculadora-Claims/
@@ -428,13 +473,15 @@ Calculadora-Claims/
 │   ├── cjf.py                   Download + parser das tabelas CJF (XLS/HTML)
 │   ├── juros.py                 Importador estático das tabelas de Juros de Mora (PDF)
 │   ├── irpf.py                  Coleta + parser da Tabela Progressiva Mensal do IRPF
+│   ├── feriados.py              Coleta + parser dos feriados bancários (ANBIMA)
 │   ├── db.py                    Camada SQLite (schema completo + helpers)
-│   ├── coletor.py               Orquestrador (BACEN + TJSP + CJF + Juros + IRPF)
+│   ├── coletor.py               Orquestrador (todas as fontes)
 │   └── calculo/                 Motor de cálculo (Fase 5)
 │       ├── modelo.py            Premissas do ativo + regras de datas da LOA
 │       ├── perfis.py            Receitas declarativas por tipo de ativo
 │       ├── indices.py           Leitores de índices em Decimal
 │       ├── motor.py             Segmentador de regimes -> Valor de Face Bruto
+│       ├── poupanca.py          Accrual de poupança pós-depósito (base 252)
 │       └── liquido.py           Impostos, honorários e share -> Valor Líquido
 ├── data/
 │   └── claims.db                Banco SQLite com toda a base
@@ -451,7 +498,7 @@ Calculadora-Claims/
     └── agendador_irpf.log       Saída do wrapper semestral IRPF
 ```
 
-**Schema SQLite** (11 tabelas):
+**Schema SQLite** (15 tabelas):
 
 | Tabela | Conteúdo |
 |--------|----------|
@@ -466,14 +513,20 @@ Calculadora-Claims/
 | `juros_fatores` | Taxas de juros de mora acumuladas (em %) — 3 categorias × 687 |
 | `irpf_publicacoes` | Páginas do IRPF coletadas (com SHA-256) |
 | `irpf_faixas` | Faixas da tabela progressiva mensal, por vigência |
+| `poupanca_periodos` | Períodos de aniversário da poupança (SGS 195) — 4.811 |
+| `feriados_publicacoes` | Versões do .xls de feriados da ANBIMA (com SHA-256) |
+| `feriados` | Feriados bancários — 1.263, de 2001 a 2099 |
 
 **Dependências externas:**
-- `pdfplumber` (única) — para parsing dos PDFs TJSP e Juros de Mora; os módulos BACEN, CJF e IRPF usam apenas stdlib
+- `pdfplumber` — parsing dos PDFs (TJSP e Juros de Mora)
+- `xlrd` — leitura do .xls BIFF8 de feriados da ANBIMA
+
+Os módulos BACEN, CJF e IRPF usam apenas a stdlib.
 
 **Operação:**
-- Tarefa `CalculadoraClaims_ColetaIndicesBACEN` — roda diariamente às 13:00 (BACEN + TJSP)
-- Tarefa `CalculadoraClaims_ColetaCJF_Mensal` — roda todo dia 5 às 08:00 (CJF, 12 tabelas)
-- Tarefa `CalculadoraClaims_ColetaIRPF_Semestral` — roda 15/01 e 15/07 às 08:00 (IRPF)
+- Tarefa `CalculadoraClaims_ColetaIndicesBACEN` — diariamente às 13:00 (BACEN + TJSP + poupança)
+- Tarefa `CalculadoraClaims_ColetaCJF_Mensal` — todo dia 5 às 08:00 (CJF, 12 tabelas)
+- Tarefa `CalculadoraClaims_ColetaIRPF_Semestral` — 15/01 e 15/07 às 08:00 (IRPF + feriados)
 - Juros de Mora — **importação manual única** (`--importar-juros`), sem agendamento
 - Logs em `logs/coleta_AAAA-MM-DD.log` e nos `logs/agendador*.log`
 
@@ -488,8 +541,9 @@ Calculadora-Claims/
 | 5 | Motor de cálculo — Valor de Face Bruto (6 perfis federais) | ✅ Concluído |
 | 5.1 | Ingestão semestral da Tabela do IRPF (com vigências) | ✅ Concluído |
 | 5.2 | Camada de valor líquido (PSS, IR-RRA, IRRF 3%, honorários, share) | ✅ Concluído |
-| 5.3 | Curva mensal de valor de face | ⏭️ Próximo |
-| 5.4 | Persistência das curvas no banco | ⏭️ |
+| 5.3 | Poupança pós-depósito (SGS 195 + feriados ANBIMA, base 252) | ✅ Concluído |
+| 5.4 | Curva mensal de valor de face | ⏭️ Próximo |
+| 5.5 | Persistência das curvas no banco | ⏭️ |
 | 6 | Interface (CLI ou Streamlit) | ⏭️ |
 | 7 | Precatórios estaduais (servidores, desapropriação, tributários, genéricos) | ⏭️ |
 | 8 | Definição de usuários, segurança e auditoria | ⏭️ |

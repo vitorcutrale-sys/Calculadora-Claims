@@ -31,6 +31,7 @@ TJSP_REFERENCIAS_DIR = REFERENCIAS_DIR / "tjsp"
 CJF_REFERENCIAS_DIR = REFERENCIAS_DIR / "cjf"
 JUROS_REFERENCIAS_DIR = REFERENCIAS_DIR / "juros"
 IRPF_REFERENCIAS_DIR = REFERENCIAS_DIR / "irpf"
+FERIADOS_REFERENCIAS_DIR = REFERENCIAS_DIR / "feriados"
 
 # ------------------------------------------------------------------ #
 # Catálogo de séries do BACEN SGS                                     #
@@ -252,6 +253,42 @@ JUROS_FONTE_DIR = JUROS_REFERENCIAS_DIR
 
 # Data de referência comum a todas as tabelas (acumulado até este mês).
 JUROS_DATA_REFERENCIA = "2021-12"
+
+# ------------------------------------------------------------------ #
+# Poupança por data de aniversário (BACEN SGS 195)                    #
+# ------------------------------------------------------------------ #
+# Série usada para remunerar precatórios JÁ DEPOSITADOS: os valores são
+# depositados em conta poupança e rendem por aniversário mensal.
+#
+# Diferente das demais séries SGS, a 195 devolve um TERCEIRO campo além
+# de data e valor — o `dataFim`:
+#
+#   {"data": "26/08/2026", "dataFim": "26/09/2026", "valor": "0.6718"}
+#
+# Cada registro é um PERÍODO de accrual: começa no dia de aniversário
+# (`data`), termina em `dataFim` e rende `valor` % no período. O
+# encadeamento de um mês para o outro se faz procurando o período cujo
+# início é o `dataFim` do período anterior.
+#
+# Por isso ela NÃO entra no dicionário SERIES (que guarda apenas pares
+# data/valor em `observacoes`): tem tabela própria, `poupanca_periodos`.
+# A coleta roda junto da rotina diária, via coletor.coletar_poupanca().
+#
+# Cobertura: de 04/05/2012 (início da "nova poupança") até o mês corrente.
+POUPANCA_SERIE = 195
+POUPANCA_DATA_INICIAL = "04/05/2012"
+
+# ------------------------------------------------------------------ #
+# Feriados bancários (ANBIMA)                                         #
+# ------------------------------------------------------------------ #
+# Necessários para a contagem de dias úteis (base 252) no cálculo
+# pro-rata da poupança entre o último aniversário e a data de cálculo.
+#
+# A ANBIMA publica a lista oficial em .xls (formato BIFF8 real, não HTML
+# disfarçado) — daí a dependência `xlrd`. A própria planilha registra o
+# critério: "os feriados em que não há sensibilização das Reservas
+# Bancárias" (exclui feriados municipais, eleições e o último dia do ano).
+FERIADOS_URL = "https://www.anbima.com.br/feriados/arqs/feriados_nacionais.xls"
 
 # ------------------------------------------------------------------ #
 # Parâmetros do IRPF (Tabela Progressiva Mensal — Receita Federal)    #

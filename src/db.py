@@ -210,6 +210,51 @@ CREATE TABLE IF NOT EXISTS irpf_faixas (
 
 CREATE INDEX IF NOT EXISTS idx_irpf_faixas_vigencia
     ON irpf_faixas(vigencia_inicio, ordem);
+
+-- ---------------------------------------------------------------- --
+-- Poupança por data de aniversário (BACEN SGS 195)                 --
+-- ---------------------------------------------------------------- --
+-- Cada linha é um PERÍODO de accrual: começa no dia de aniversário,
+-- termina em data_fim e rende `taxa` % no período. O encadeamento
+-- mensal se faz procurando o período cujo início é o data_fim do
+-- anterior. Tabela própria porque a série traz `dataFim`, campo que
+-- `observacoes` (data + valor) não acomoda.
+CREATE TABLE IF NOT EXISTS poupanca_periodos (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    data_inicio   TEXT NOT NULL,      -- YYYY-MM-DD (data de aniversário)
+    data_fim      TEXT NOT NULL,      -- YYYY-MM-DD (fim do período)
+    taxa          REAL NOT NULL,      -- % no período
+    coletada_em   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (data_inicio)
+);
+
+CREATE INDEX IF NOT EXISTS idx_poupanca_inicio
+    ON poupanca_periodos(data_inicio);
+
+-- ---------------------------------------------------------------- --
+-- Feriados bancários (ANBIMA)                                      --
+-- ---------------------------------------------------------------- --
+CREATE TABLE IF NOT EXISTS feriados_publicacoes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    fonte_url       TEXT NOT NULL,
+    data_coleta     TEXT NOT NULL,
+    sha256          TEXT NOT NULL,
+    caminho_arquivo TEXT NOT NULL,
+    UNIQUE (sha256)
+);
+
+-- Usados na contagem de dias úteis (base 252) do pro-rata da poupança.
+CREATE TABLE IF NOT EXISTS feriados (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    data           TEXT NOT NULL,     -- YYYY-MM-DD
+    dia_semana     TEXT,
+    descricao      TEXT,
+    publicacao_id  INTEGER NOT NULL,
+    UNIQUE (data),
+    FOREIGN KEY (publicacao_id) REFERENCES feriados_publicacoes(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feriados_data ON feriados(data);
 """
 
 
@@ -766,6 +811,140 @@ def resumo_irpf(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         """
     )
     return cur.fetchall()
+
+
+# ------------------------------------------------------------------ #
+# Poupança (períodos por aniversário)                                 #
+# ------------------------------------------------------------------ #
+def upsert_poupanca_periodos(
+    conn: sqlite3.Connection,
+    periodos: Iterable[tuple[str, str, float]],
+) -> int:
+    """
+    Insere ou atualiza períodos (data_inicio, data_fim, taxa).
+    Retorna a quantidade de linhas afetadas.
+    """
+    afetadas = 0
+    for data_inicio, data_fim, taxa in periodos:
+        cur = conn.execute(
+            """
+            INSERT INTO poupanca_periodos (data_inicio, data_fim, taxa)
+            VALUES (?, ?, ?)
+            ON CONFLICT(data_inicio) DO UPDATE SET
+                data_fim    = excluded.data_fim,
+                taxa        = excluded.taxa,
+                coletada_em = datetime('now')
+            WHERE poupanca_periodos.taxa     != excluded.taxa
+               OR poupanca_periodos.data_fim != excluded.data_fim
+            """,
+            (data_inicio, data_fim, taxa),
+        )
+        if cur.rowcount == 1:
+            afetadas += 1
+    return afetadas
+
+
+def periodo_poupanca(
+    conn: sqlite3.Connection, data_inicio: str
+) -> Optional[sqlite3.Row]:
+    """Período de poupança que começa exatamente em `data_inicio` (ISO)."""
+    cur = conn.execute(
+        "SELECT * FROM poupanca_periodos WHERE data_inicio = ?", (data_inicio,)
+    )
+    return cur.fetchone()
+
+
+def ultima_data_poupanca(conn: sqlite3.Connection) -> Optional[str]:
+    """Data de início mais recente já gravada, ou None."""
+    row = conn.execute(
+        "SELECT MAX(data_inicio) AS m FROM poupanca_periodos"
+    ).fetchone()
+    return row["m"] if row and row["m"] else None
+
+
+def resumo_poupanca(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
+    """Contagem e faixa de datas dos períodos de poupança."""
+    return conn.execute(
+        """
+        SELECT COUNT(*) AS n, MIN(data_inicio) AS primeira,
+               MAX(data_inicio) AS ultima
+          FROM poupanca_periodos
+        """
+    ).fetchone()
+
+
+# ------------------------------------------------------------------ #
+# Feriados bancários                                                  #
+# ------------------------------------------------------------------ #
+def ultimo_sha256_feriados(conn: sqlite3.Connection) -> Optional[str]:
+    """SHA-256 da última coleta da planilha de feriados."""
+    row = conn.execute(
+        "SELECT sha256 FROM feriados_publicacoes ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return row["sha256"] if row else None
+
+
+def registrar_publicacao_feriados(
+    conn: sqlite3.Connection,
+    fonte_url: str,
+    sha256: str,
+    caminho_arquivo: str,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO feriados_publicacoes
+            (fonte_url, data_coleta, sha256, caminho_arquivo)
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            fonte_url,
+            datetime.now().isoformat(timespec="seconds"),
+            sha256,
+            caminho_arquivo,
+        ),
+    )
+    return cur.lastrowid
+
+
+def upsert_feriados(
+    conn: sqlite3.Connection,
+    publicacao_id: int,
+    feriados: Iterable,
+) -> int:
+    """Insere ou atualiza feriados (objetos feriados.Feriado)."""
+    afetadas = 0
+    for f in feriados:
+        cur = conn.execute(
+            """
+            INSERT INTO feriados (data, dia_semana, descricao, publicacao_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(data) DO UPDATE SET
+                dia_semana    = excluded.dia_semana,
+                descricao     = excluded.descricao,
+                publicacao_id = excluded.publicacao_id
+            WHERE feriados.descricao != excluded.descricao
+            """,
+            (f.data.isoformat(), f.dia_semana, f.descricao, publicacao_id),
+        )
+        if cur.rowcount == 1:
+            afetadas += 1
+    return afetadas
+
+
+def listar_feriados(
+    conn: sqlite3.Connection, de: str, ate: str
+) -> set[str]:
+    """Conjunto de feriados (datas ISO) no intervalo [de, ate] inclusive."""
+    cur = conn.execute(
+        "SELECT data FROM feriados WHERE data >= ? AND data <= ?", (de, ate)
+    )
+    return {r["data"] for r in cur.fetchall()}
+
+
+def resumo_feriados(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT COUNT(*) AS n, MIN(data) AS primeiro, MAX(data) AS ultimo FROM feriados"
+    ).fetchone()
 
 
 # ------------------------------------------------------------------ #

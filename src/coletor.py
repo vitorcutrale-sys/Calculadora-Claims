@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from . import bacen, cjf, config, db, irpf, juros, tjsp
+from . import bacen, cjf, config, db, feriados, irpf, juros, tjsp
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +288,101 @@ def coletar_cjf(mes: int = 0, ano: int = 0) -> dict:
 
 
 # ------------------------------------------------------------------ #
+# Coleta Poupança por aniversário (SGS 195)                           #
+# ------------------------------------------------------------------ #
+def coletar_poupanca(modo: str = "auto") -> dict:
+    """
+    Coleta a série 195 (poupança por data de aniversário), preservando o
+    `dataFim` de cada período.
+
+    modo:
+        "auto"     : incremental se já há histórico, senão completo
+        "completo" : força recarga desde POUPANCA_DATA_INICIAL
+
+    Roda junto da rotina diária (faz parte de coletar_tudo).
+    """
+    db.inicializar_schema()
+
+    estatisticas = {"periodos_afetados": 0, "erros": []}
+
+    try:
+        with db.conectar() as conn:
+            ultima = db.ultima_data_poupanca(conn)
+
+        if modo == "completo" or ultima is None:
+            data_inicio_br = config.POUPANCA_DATA_INICIAL
+            logger.info("Poupança: carga COMPLETA a partir de %s.", data_inicio_br)
+        else:
+            # Retrocede 40 dias: períodos em aberto podem ser revisados e a
+            # janela cobre com folga um ciclo mensal de aniversário.
+            retroagido = datetime.strptime(ultima, "%Y-%m-%d").date() - timedelta(days=40)
+            data_inicio_br = retroagido.strftime("%d/%m/%Y")
+            logger.info(
+                "Poupança: carga INCREMENTAL a partir de %s (última: %s).",
+                data_inicio_br, ultima,
+            )
+
+        periodos = bacen.baixar_serie_com_data_fim(
+            config.POUPANCA_SERIE, data_inicio_br
+        )
+        with db.conectar() as conn:
+            afetadas = db.upsert_poupanca_periodos(conn, periodos)
+
+        estatisticas["periodos_afetados"] = afetadas
+        logger.info("Poupança: %d períodos afetados.", afetadas)
+
+    except Exception as e:
+        logger.exception("Falha na coleta da poupança (série %d).", config.POUPANCA_SERIE)
+        estatisticas["erros"].append(str(e))
+
+    return estatisticas
+
+
+# ------------------------------------------------------------------ #
+# Coleta Feriados bancários (ANBIMA)                                  #
+# ------------------------------------------------------------------ #
+def coletar_feriados() -> dict:
+    """
+    Baixa a planilha de feriados bancários da ANBIMA e atualiza o banco
+    quando o arquivo muda (SHA-256).
+    """
+    db.inicializar_schema()
+
+    estatisticas = {"feriados_afetados": 0, "arquivo_inalterado": False, "erros": []}
+
+    try:
+        with db.conectar() as conn:
+            sha_anterior = db.ultimo_sha256_feriados(conn)
+
+        resultado = feriados.coletar(sha256_anterior=sha_anterior)
+
+        if not resultado.mudou:
+            estatisticas["arquivo_inalterado"] = True
+            logger.info("FERIADOS: sem mudança desde a última coleta.")
+            return estatisticas
+
+        with db.conectar() as conn:
+            pub_id = db.registrar_publicacao_feriados(
+                conn,
+                fonte_url=config.FERIADOS_URL,
+                sha256=resultado.sha256,
+                caminho_arquivo=str(resultado.caminho_arquivo),
+            )
+            afetadas = db.upsert_feriados(conn, pub_id, resultado.feriados)
+
+        estatisticas["feriados_afetados"] = afetadas
+        logger.info(
+            "FERIADOS: %d feriados atualizados (publicação %d).", afetadas, pub_id
+        )
+
+    except Exception as e:
+        logger.exception("Falha na coleta dos feriados (ANBIMA).")
+        estatisticas["erros"].append(str(e))
+
+    return estatisticas
+
+
+# ------------------------------------------------------------------ #
 # Coleta IRPF (anual)                                                 #
 # ------------------------------------------------------------------ #
 def coletar_irpf(ano: int = 0) -> dict:
@@ -462,6 +557,13 @@ def coletar_tudo(modo_bacen: str = "auto") -> dict:
             "erros": [str(e)],
         }
 
+    logger.info("--- Coleta Poupança (aniversário) ---")
+    try:
+        poupanca_stats = coletar_poupanca()
+    except Exception as e:
+        logger.exception("Erro fatal na coleta da poupança.")
+        poupanca_stats = {"periodos_afetados": 0, "erros": [str(e)]}
+
     logger.info("--- Coleta CJF ---")
     try:
         cjf_stats = coletar_cjf()
@@ -479,4 +581,5 @@ def coletar_tudo(modo_bacen: str = "auto") -> dict:
         "bacen": bacen_stats,
         "tjsp": tjsp_stats,
         "cjf": cjf_stats,
+        "poupanca": poupanca_stats,
     }

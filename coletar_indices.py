@@ -9,6 +9,8 @@ Uso:
     python coletar_indices.py --so-tjsp                # roda apenas TJSP
     python coletar_indices.py --so-cjf                 # roda apenas CJF
     python coletar_indices.py --so-cjf --mes 5 --ano 2025  # CJF para mês/ano específico
+    python coletar_indices.py --so-poupanca             # poupança por aniversário (SGS 195)
+    python coletar_indices.py --so-feriados             # feriados bancários (ANBIMA)
     python coletar_indices.py --so-irpf                 # coleta anual da tabela do IRPF
     python coletar_indices.py --so-irpf --ano 2025       # IRPF de um ano específico
     python coletar_indices.py --importar-juros          # importa tabelas de juros de mora (estático)
@@ -56,6 +58,8 @@ def imprimir_resumo() -> None:
         linhas_cjf = db.resumo_cjf(conn)
         linhas_juros = db.resumo_juros(conn)
         linhas_irpf = db.resumo_irpf(conn)
+        resumo_poup = db.resumo_poupanca(conn)
+        resumo_fer = db.resumo_feriados(conn)
 
     print("\n=== Resumo do banco de índices (BACEN) ===")
     print(
@@ -110,6 +114,20 @@ def imprimir_resumo() -> None:
                 f"{r['isencao_ate']:>17,.2f}"
             )
 
+    if resumo_poup and resumo_poup["n"]:
+        print("\n=== Poupança por aniversário (SGS 195) ===")
+        print(
+            f"  {resumo_poup['n']} períodos | "
+            f"{resumo_poup['primeira']} a {resumo_poup['ultima']}"
+        )
+
+    if resumo_fer and resumo_fer["n"]:
+        print("\n=== Feriados bancários (ANBIMA) ===")
+        print(
+            f"  {resumo_fer['n']} feriados | "
+            f"{resumo_fer['primeiro']} a {resumo_fer['ultimo']}"
+        )
+
     print(f"\nBanco: {config.DB_PATH}")
 
 
@@ -159,6 +177,16 @@ def main() -> int:
         "--so-irpf",
         action="store_true",
         help="Roda apenas a coleta anual da Tabela Progressiva Mensal do IRPF.",
+    )
+    grupo_fonte.add_argument(
+        "--so-poupanca",
+        action="store_true",
+        help="Roda apenas a coleta da poupança por aniversário (SGS 195).",
+    )
+    grupo_fonte.add_argument(
+        "--so-feriados",
+        action="store_true",
+        help="Roda apenas a coleta dos feriados bancários (ANBIMA).",
     )
 
     parser.add_argument(
@@ -255,6 +283,29 @@ def main() -> int:
             if estat_irpf["erros"]:
                 for err in estat_irpf["erros"]:
                     logger.error("IRPF erro: %s", err)
+                exit_code = 1
+        elif args.so_poupanca:
+            logger.info("Modo: apenas Poupança (SGS 195)")
+            estat_p = coletor.coletar_poupanca(
+                modo="completo" if args.completo else "auto"
+            )
+            logger.info("Poupança: %d períodos afetados.", estat_p["periodos_afetados"])
+            if estat_p["erros"]:
+                for err in estat_p["erros"]:
+                    logger.error("Poupança erro: %s", err)
+                exit_code = 1
+        elif args.so_feriados:
+            logger.info("Modo: apenas Feriados bancários (ANBIMA)")
+            estat_f = coletor.coletar_feriados()
+            if estat_f["arquivo_inalterado"]:
+                logger.info("Feriados: arquivo inalterado, nada a fazer.")
+            else:
+                logger.info(
+                    "Feriados: %d feriados atualizados.", estat_f["feriados_afetados"]
+                )
+            if estat_f["erros"]:
+                for err in estat_f["erros"]:
+                    logger.error("Feriados erro: %s", err)
                 exit_code = 1
         elif args.importar_juros:
             logger.info(
