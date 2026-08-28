@@ -2,7 +2,7 @@
 
 Projeto para construir a base de dados de índices econômicos aplicáveis a precatórios, alimentada por **três fontes oficiais** de coleta periódica, mais uma **base histórica estática** de juros de mora:
 
-- **BACEN SGS** — séries diárias/mensais de IPCA, IGP-DI, IGP-M, Selic, CDI, TR, IPCA-E e Poupança, via API JSON.
+- **BACEN SGS** — séries diárias/mensais de IPCA, IPCA-15, IGP-DI, IGP-M, Selic, CDI, TR, Taxa Legal e Poupança, via API JSON.
 - **TJSP — Tabelas Práticas** — PDFs oficiais com fatores acumulados de atualização monetária (atualmente, a Tabela da EC 113/2021).
 - **CJF — SICOM** — Tabelas de Correção Monetária e Valores Históricos dos Indexadores do Conselho da Justiça Federal, para as 6 categorias de ação judicial, via formulário web mensal.
 - **Juros de Mora (estático)** — Tabelas históricas de juros de mora em condenações da Fazenda Pública (Servidores, Não Tributário e Tributário), importadas uma única vez a partir de PDFs locais. **Sem coleta periódica**: os juros deixaram de ser aplicados em 09/12/2021 (art. 3º da EC 113/2021).
@@ -66,7 +66,7 @@ Calculadora-Claims/
 | 196    | Poupança                 | % a.m.    | BCB   | mensal        |
 | 4390   | Selic mensal             | % a.m.    | BCB   | mensal        |
 | 4391   | CDI mensal               | % a.m.    | BCB   | mensal        |
-| 7478   | IPCA-E                   | % a.m.    | BCB   | mensal        |
+| 7478   | IPCA-15                  | % a.m.    | IBGE  | mensal        |
 | 7811   | TR - Taxa Referencial    | % a.m.    | BCB   | mensal        |
 | 29543  | Taxa Legal               | % a.m.    | BCB   | mensal        |
 
@@ -446,8 +446,19 @@ O motor segmenta a linha do tempo entre a data base e a data de cálculo, aplica
 |--------|--------|--------|
 | **R1** | até nov/2021 | correção SICOM/CJF (fecha na referência dez/2021) + juros de mora |
 | **R2** | dez/2021 a jul/2025 | Selic **linear** sobre o saldo global (EC 113/2021) |
-| **R3** | ago/2025 em diante | IPCA composto + juros: **2% a.a. pro-rata** (DAYS360) para LOA ≤ 2026, ou **Taxa Legal** (série 29543) para LOA ≥ 2027 |
-| **R_graça** | expedição+1 até 31/12 do ano da LOA | IPCA-E, **sem juros** — *sobrepõe* o regime legal na sua janela |
+| **R3** | ago/2025 em diante | depende da **posição** na linha do tempo (ver abaixo) |
+| **R_graça** | expedição+1 até 31/12 do ano da LOA | IPCA-15, **sem juros** — *sobrepõe* o regime legal na sua janela |
+
+O **R3 tem duas composições**, conforme onde o trecho cai:
+
+| Posição do R3 | Correção | Juros |
+|---------------|----------|-------|
+| **Pré-expedição** — correção entre a data base e a expedição, no trecho posterior a 01/08/2025 | **IPCA-15** (7478) | **Taxa Legal** (29543) |
+| **Pós-graça** — precatório expedido e não pago | IPCA (433) | 2% a.a. pro-rata (DAYS360), ou Taxa Legal se LOA ≥ 2027 |
+
+Como a janela de graça separa os dois casos no grid mensal, cada segmento de R3 fica inteiramente de um lado ou do outro. O `trace` registra a `posicao` (`pre_expedicao` / `pos_graca`), a `correcao` e o `juros_modo` aplicados.
+
+> **Nota sobre a série 7478.** É o **IPCA-15** (variação mensal, coleta encerrada no dia 15) — na praxe forense costuma ser chamada de "IPCA-E", ainda que o IPCA-E em sentido estrito seja o acumulado trimestral do IPCA-15. Conferido contra os valores oficiais: jan/2025 = 0,11% (IPCA-15) vs 0,16% (IPCA).
 
 O `R_graça` recorta a régua legal: um precatório antigo pode passar por `R1 → R_graça → R1 → R2 → R3`. A composição principal/juros/selic é carregada por toda a cadeia (o juros do R3 incide só sobre o principal corrigido).
 

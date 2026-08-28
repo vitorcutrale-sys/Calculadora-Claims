@@ -15,8 +15,10 @@ Regimes (bloco federal de servidores):
   R1      | até nov/2021                    | SICOM/IPCA-E (TCM_3), fecha em dez/2021
           |                                 | (divisor coef(12/2021)=1) + juros de mora
   R2      | dez/2021 .. jul/2025            | Selic linear (4390) sobre o global
-  R3      | ago/2025 ..                     | IPCA (433) composto + 2% a.a. pro-rata
-          |                                 | DAYS360 sobre o principal corrigido
+  R3      | ago/2025 ..                     | depende da POSIÇÃO na linha do tempo:
+          |   pré-expedição                 |   IPCA-15 (7478) + Taxa Legal (29543)
+          |   pós-graça                     |   IPCA (433) + 2% a.a. pro-rata
+          |                                 |   (ou Taxa Legal se LOA >= 2027)
 
 Convenção de mês: as correções incidem a partir do mês da data base, INCLUSIVE
 (o fator do primeiro regime já inclui o índice do mês da data base — é a lógica
@@ -47,10 +49,10 @@ from .perfis import (
 )
 
 # Séries BACEN comuns a todos os perfis federais (R2/R3/graça idênticos).
-SERIE_IPCAE = 7478       # R_graça
+SERIE_IPCA15 = 7478      # R_graça e R3 pré-expedição (IPCA-15, a "IPCA-E" forense)
 SERIE_SELIC = 4390       # R2
-SERIE_IPCA = 433         # R3 (correção)
-SERIE_TAXA_LEGAL = 29543 # R3 (juros, expedição a partir de 2027)
+SERIE_IPCA = 433         # R3 pós-graça (correção)
+SERIE_TAXA_LEGAL = 29543 # juros: R3 pré-expedição sempre; pós-graça se LOA >= 2027
 
 # A partir desta LOA (ano orçamentário), o juros do R3 passa a ser a Taxa Legal
 # (art. 406 CC / Lei 14.905/2024) em vez dos 2% a.a. pro-rata.
@@ -214,7 +216,7 @@ def calcular_vf_bruto(
 
     for regime, ini, fim in _segmentos(inicio, fim_mes, inicio_graca, loa_mes):
         if regime == "GRACA":
-            f = indices.fator_ipca_composto(conn, SERIE_IPCAE, ini, fim)
+            f = indices.fator_ipca_composto(conn, SERIE_IPCA15, ini, fim)
             principal *= f; juros *= f; selic *= f
             detalhe = {"fator": f}
 
@@ -249,29 +251,50 @@ def calcular_vf_bruto(
             detalhe = {"soma_selic": soma, "selic_acrescida": base * soma}
 
         else:  # R3
-            # Correção: IPCA composto sobre todos os componentes.
-            f = indices.fator_ipca_composto(conn, SERIE_IPCA, ini, fim)
-            principal *= f; juros *= f; selic *= f
+            # A composição do R3 depende de ONDE ele cai na linha do tempo:
+            #
+            #   PRÉ-EXPEDIÇÃO (correção entre a data base e a expedição, no
+            #   trecho posterior a 01/08/2025) -> IPCA-15 + Taxa Legal.
+            #
+            #   PÓS-GRAÇA (precatório expedido e não pago) -> IPCA + juros de
+            #   2% a.a. pro-rata, ou Taxa Legal se a LOA for >= 2027.
+            #
+            # Como a janela de graça separa os dois casos no grid mensal, um
+            # segmento de R3 fica inteiramente de um lado ou do outro.
+            pre_expedicao = fim < inicio_graca
 
-            # Juros do R3: depende da LOA (ano orçamentário) do precatório.
-            #   LOA >= 2027 -> Taxa Legal (série 29543), soma linear
-            #   LOA <  2027 -> 2% a.a. pro-rata (DAYS360 desde ago/2025)
-            # Em ambos os casos, incide sobre o principal já corrigido.
-            if premissas.ano_orcamento >= ANO_LOA_JUROS_TAXA_LEGAL:
+            if pre_expedicao:
+                f = indices.fator_ipca_composto(conn, SERIE_IPCA15, ini, fim)
+                principal *= f; juros *= f; selic *= f
                 fr_j = indices.soma_linear_serie(conn, SERIE_TAXA_LEGAL, ini, fim)
                 j_r3 = principal * fr_j
                 detalhe = {
-                    "fator": f, "juros_modo": "taxa_legal",
+                    "fator": f, "correcao": "ipca15",
+                    "juros_modo": "taxa_legal", "posicao": "pre_expedicao",
                     "juros_frac": fr_j, "juros_r3": j_r3,
                 }
             else:
-                dias = indices.dias_360(_add_mes(_EC136_MES), indices.fim_do_mes(fim))
-                fr_j = JUROS_EC136_AA * Decimal(dias) / Decimal("360")
+                f = indices.fator_ipca_composto(conn, SERIE_IPCA, ini, fim)
+                principal *= f; juros *= f; selic *= f
+                if premissas.ano_orcamento >= ANO_LOA_JUROS_TAXA_LEGAL:
+                    fr_j = indices.soma_linear_serie(conn, SERIE_TAXA_LEGAL, ini, fim)
+                    detalhe = {
+                        "fator": f, "correcao": "ipca",
+                        "juros_modo": "taxa_legal", "posicao": "pos_graca",
+                        "juros_frac": fr_j,
+                    }
+                else:
+                    dias = indices.dias_360(
+                        _add_mes(_EC136_MES), indices.fim_do_mes(fim)
+                    )
+                    fr_j = JUROS_EC136_AA * Decimal(dias) / Decimal("360")
+                    detalhe = {
+                        "fator": f, "correcao": "ipca",
+                        "juros_modo": "2pct_prorata", "posicao": "pos_graca",
+                        "dias_360": dias, "juros_frac": fr_j,
+                    }
                 j_r3 = principal * fr_j
-                detalhe = {
-                    "fator": f, "juros_modo": "2pct_prorata",
-                    "dias_360": dias, "juros_frac": fr_j, "juros_r3": j_r3,
-                }
+                detalhe["juros_r3"] = j_r3
             juros += j_r3
 
         res.trace.append({

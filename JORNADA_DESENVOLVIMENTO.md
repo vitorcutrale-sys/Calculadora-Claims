@@ -65,7 +65,7 @@ Construir um banco SQLite com o histórico completo de **8 séries econômicas**
 | 196 | Poupança | BCB |
 | 4390 | Selic mensal | BCB |
 | 4391 | CDI mensal | BCB |
-| 7478 | IPCA-E | BCB |
+| 7478 | IPCA-15 (rotulada "IPCA-E" até ago/2026 — ver Fase 5.2) | IBGE |
 | 7811 | TR - Taxa Referencial | BCB |
 
 A escolha dessas séries específicas reflete o universo de cálculos de precatórios e claims tributários: IPCA e IPCA-E para atualização monetária, IGP-DI/IGP-M para contratos antigos, Selic e CDI para juros, TR para certos regimes, Poupança para outros.
@@ -454,6 +454,27 @@ O depósito **interrompe** a régua judicial. O motor passou a ter um desvio no 
 O fator da poupança é aplicado proporcionalmente aos três componentes (principal, juros, selic), preservando a composição — que continua importando, porque PSS e IR-RRA incidem sobre o principal.
 
 Uma observação de negócio que apareceu no primeiro teste: um ativo depositado em 03/2024 vale **mais** hoje do que o mesmo ativo não depositado (R$ 674,6M contra R$ 653,4M). Não é bug — a poupança (~7,4% a.a.) rendeu acima do regime da EC 136 (IPCA + 2% a.a.) no período. O depósito, nesse cenário, foi favorável ao credor.
+
+### Refinamento do R3: a posição na linha do tempo importa
+
+Fechada a poupança, veio um adendo que mudou o R3: o **IPCA-15 com juros da Taxa Legal** vale para a correção entre a data base e a **expedição**, quando esse período se estende além de 01/08/2025. Cruzando com a definição anterior — "quando o precatório for anterior a 2027, o R3 **após o período de graça** usa juros de 2% a.a." — ficou claro que as duas regras tratam de **posições diferentes** do mesmo regime:
+
+| Posição do R3 | Correção | Juros |
+|---------------|----------|-------|
+| Pré-expedição | IPCA-15 (7478) | Taxa Legal (29543) |
+| Pós-graça | IPCA (433) | 2% a.a. pro-rata, ou Taxa Legal se LOA ≥ 2027 |
+
+A implementação saiu simples porque o segmentador já resolvia o resto: como a janela de graça separa os dois casos no grid mensal, um segmento de R3 fica sempre inteiramente de um lado ou do outro — basta testar se ele termina antes do início da graça. O `trace` passou a registrar a `posicao` aplicada.
+
+A diferença é material: no mesmo intervalo (ago/2025 a ago/2026), a Taxa Legal rendeu **9,14%** contra **2,17%** do 2% pro-rata.
+
+### Um rótulo errado que valia a verificação
+
+Ao implementar, a menção a "IPCA-15" levantou a dúvida: nossa série 7478 estava rotulada como **IPCA-E** desde a Fase 1. A conferência contra os valores oficiais desfez o mal-entendido — jan/2025 = **0,11%** na 7478, que é exatamente o **IPCA-15** publicado (o IPCA do mesmo mês foi 0,16%).
+
+Ou seja: a série sempre foi o IPCA-15; só o nome estava trocado. Na praxe forense chama-se "IPCA-E" (o IPCA-E em sentido estrito é o acumulado trimestral do IPCA-15), o que explica a confusão de origem. Consequência prática: o **R_graça já usava o índice correto** desde o início — e o novo R3 pré-expedição reaproveita a mesma série, sem precisar de coleta nova.
+
+A lição que fica: quando uma regra nova menciona um índice por outro nome, vale conferir o dado antes de assumir que é uma fonte diferente. Aqui a verificação evitou tanto uma coleta redundante quanto o risco oposto — usar o índice errado achando que estava certo.
 
 ## 12. Estado atual do projeto
 

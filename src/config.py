@@ -100,12 +100,18 @@ SERIES = {
         "fonte": "BCB",
         "descricao": "TR - Taxa Referencial acumulada no mês",
     },
-    7478:{
-        "nome":"IPCA-E",
-        "unidade": "%a.m.",
-        "periodicidade":"mensal",
-        "fonte":"BCB",
-        "descricao":"Indice Nacional de Preços ao Consumidor Amplo"
+    7478: {
+        "nome": "IPCA-15",
+        "unidade": "% a.m.",
+        "periodicidade": "mensal",
+        "fonte": "IBGE",
+        "descricao": (
+            "IPCA-15 — variação mensal do Índice Nacional de Preços ao "
+            "Consumidor Amplo com coleta encerrada no dia 15. Frequentemente "
+            "chamado de 'IPCA-E' na praxe forense (o IPCA-E em sentido estrito "
+            "é o acumulado trimestral do IPCA-15). Conferido contra os valores "
+            "oficiais: jan/2025 = 0,11% (IPCA-15) vs 0,16% (IPCA)."
+        ),
     },
     29543: {
         "nome": "Taxa Legal",
