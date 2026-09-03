@@ -210,22 +210,33 @@ CJF_SEQ_ENCADEAMENTO = {
 }
 
 # Catálogo de combinações (tipoTabela × seqEncadeamento) a coletar.
-# Adicione ou remova entradas conforme a necessidade do escritório.
+#
+# Coletamos APENAS as tabelas que algum perfil de cálculo consome — uma
+# tabela por metodologia de correção realmente distinta. Verificação feita
+# célula a célula contra o SICOM (referência 08/2026, 743 meses):
+#
+#   seq 3 vs seq 5 -> 0 mês divergente. IDÊNTICAS. Depois da EC 113 a
+#       distinção "servidores" x "Devedor Fazenda Pública" desapareceu da
+#       correção monetária (ambas no Cap. 4, item 4.2.1.1). A TCM_5 era uma
+#       cópia da TCM_3; os dois perfis que a usavam agora leem a TCM_3 e se
+#       diferenciam pela tabela de JUROS e pela tributação, não pela correção.
+#   seq 1 vs seq 3 -> 327 meses divergentes, todos até 12/1991 (a
+#       desapropriação usa IPC-FGV em 03-12/1991, as condenatórias usam INPC
+#       até 11/1991). Idênticas de 01/1992 em diante. TCM_1 é necessária.
+#   seq 2 -> índices próprios (IRSM, URV, IPC-R, IGP-DI, INPC). Necessária.
+#   seq 6 -> IPCA-E corrido, SEM a janela da Selic da EC 113, porque a EC 113
+#       alcança débitos da Fazenda Pública. Devedor não enquadrado como
+#       Fazenda Pública não emite precatório: fora do escopo deste motor.
+#
+# As VHI (valores históricos dos indexadores) não são consumidas por nenhum
+# perfil — os cálculos usam os coeficientes das TCM. Ficam fora da coleta
+# periódica; se voltarem a ser necessárias, basta reinserir a entrada aqui.
 CJF_TABELAS = {
-    # TCM — coeficientes de atualização direta (uso mais comum em cálculos)
+    # TCM — coeficientes de atualização direta, uma por metodologia distinta
     "TCM_1": {"tipo_tabela": "TCM", "seq_encadeamento": 1, "nome": "TCM - Desapropriações"},
     "TCM_2": {"tipo_tabela": "TCM", "seq_encadeamento": 2, "nome": "TCM - Benefício Previdenciário"},
-    "TCM_3": {"tipo_tabela": "TCM", "seq_encadeamento": 3, "nome": "TCM - Ações Condenatórias (servidores)"},
+    "TCM_3": {"tipo_tabela": "TCM", "seq_encadeamento": 3, "nome": "TCM - Ações Condenatórias (servidores e Fazenda Pública)"},
     "TCM_4": {"tipo_tabela": "TCM", "seq_encadeamento": 4, "nome": "TCM - Repetição de Indébito Tributário"},
-    "TCM_5": {"tipo_tabela": "TCM", "seq_encadeamento": 5, "nome": "TCM - Ações Condenatórias (Fazenda Pública)"},
-    "TCM_6": {"tipo_tabela": "TCM", "seq_encadeamento": 6, "nome": "TCM - Ações Condenatórias (devedor comum)"},
-    # VHI — valores históricos dos indexadores (ORTN, OTN, BTN, etc.)
-    "VHI_1": {"tipo_tabela": "VHI", "seq_encadeamento": 1, "nome": "VHI - Desapropriações"},
-    "VHI_2": {"tipo_tabela": "VHI", "seq_encadeamento": 2, "nome": "VHI - Benefício Previdenciário"},
-    "VHI_3": {"tipo_tabela": "VHI", "seq_encadeamento": 3, "nome": "VHI - Ações Condenatórias (servidores)"},
-    "VHI_4": {"tipo_tabela": "VHI", "seq_encadeamento": 4, "nome": "VHI - Repetição de Indébito Tributário"},
-    "VHI_5": {"tipo_tabela": "VHI", "seq_encadeamento": 5, "nome": "VHI - Ações Condenatórias (Fazenda Pública)"},
-    "VHI_6": {"tipo_tabela": "VHI", "seq_encadeamento": 6, "nome": "VHI - Ações Condenatórias (devedor comum)"},
 }
 
 # ------------------------------------------------------------------ #

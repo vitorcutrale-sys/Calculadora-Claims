@@ -16,9 +16,17 @@ Regimes (bloco federal de servidores):
           |                                 | (divisor coef(12/2021)=1) + juros de mora
   R2      | dez/2021 .. jul/2025            | Selic linear (4390) sobre o global
   R3      | ago/2025 ..                     | depende da POSIÇÃO na linha do tempo:
-          |   pré-expedição                 |   IPCA-15 (7478) + Taxa Legal (29543)
-          |   pós-graça                     |   IPCA (433) + 2% a.a. pro-rata
-          |                                 |   (ou Taxa Legal se LOA >= 2027)
+          |   pré-expedição                 |   IPCA-E/IPCA-15 (7478) + Taxa Legal (29543)
+          |   pós-graça                     |   IPCA (433) + juros de 2% a.a. pro-rata
+
+O R3 não é um regime único: a EXPEDIÇÃO do precatório muda a sua composição.
+Antes da expedição o crédito ainda é dívida judicial em curso e se corrige pelo
+IPCA-E (= IPCA-15, o índice forense) com os juros da Taxa Legal. Depois do fim
+do período de graça o crédito é precatório vencido e não pago, e aí valem o IPCA
+do IBGE e os juros de mora de 2% a.a. da EC 136. Como a janela de graça fica
+entre os dois, cada segmento de R3 cai inteiramente de um lado ou do outro, e
+os juros de cada um correm apenas dentro do próprio segmento — o período de
+graça não gera juros e não entra na contagem de nenhum dos dois.
 
 Convenção de mês: as correções incidem a partir do mês da data base, INCLUSIVE
 (o fator do primeiro regime já inclui o índice do mês da data base — é a lógica
@@ -52,11 +60,8 @@ from .perfis import (
 SERIE_IPCA15 = 7478      # R_graça e R3 pré-expedição (IPCA-15, a "IPCA-E" forense)
 SERIE_SELIC = 4390       # R2
 SERIE_IPCA = 433         # R3 pós-graça (correção)
-SERIE_TAXA_LEGAL = 29543 # juros: R3 pré-expedição sempre; pós-graça se LOA >= 2027
+SERIE_TAXA_LEGAL = 29543 # juros do R3 pré-expedição
 
-# A partir desta LOA (ano orçamentário), o juros do R3 passa a ser a Taxa Legal
-# (art. 406 CC / Lei 14.905/2024) em vez dos 2% a.a. pro-rata.
-ANO_LOA_JUROS_TAXA_LEGAL = 2027
 # As tabelas do R1 (correção SICOM + juros de mora) vêm do PERFIL:
 #   perfil["r1_correcao"] e perfil["r1_juros"].
 
@@ -187,6 +192,10 @@ def calcular_vf_bruto(
 
     perfil = obter_perfil(premissas.perfil)
 
+    # Depósito judicial puro: só poupança, sem regimes judiciais nem LOA.
+    if perfil.get("motor") == "deposito_judicial":
+        return _calcular_deposito_judicial(conn, premissas, ate)
+
     # Precatório já DEPOSITADO: a correção judicial para na data do depósito e
     # o valor passa a render poupança por aniversário até a data de cálculo.
     if premissas.precatorio_depositado and premissas.data_deposito:
@@ -233,16 +242,25 @@ def calcular_vf_bruto(
             juros += jmora
             detalhe = {"fator": f, "juros_mora_frac": fr_mora, "juros_mora": jmora}
 
-            # Juros COMPENSATÓRIOS (desapropriação sem precatório expedido):
-            # simples, sobre o principal corrigido, dentro do R1.
-            if perfil.get("juros_compensatorios") and not premissas.precatorio_expedido:
-                fr_comp = _fracao_compensatorios(
-                    ini, fim, premissas.transito_antes_adi2332
-                )
-                jcomp = principal * fr_comp
-                juros += jcomp
-                detalhe["compensatorios_frac"] = fr_comp
-                detalhe["juros_compensatorios"] = jcomp
+            # Juros COMPENSATÓRIOS (desapropriação): simples, sobre o principal
+            # corrigido, dentro do R1. São OPT-IN — ver
+            # PremissasAtivo.aplicar_juros_compensatorios. Quando o principal
+            # informado vem de um ofício requisitório, os compensatórios já
+            # estão embutidos nele e não devem incidir de novo.
+            if perfil.get("juros_compensatorios"):
+                if premissas.aplicar_juros_compensatorios:
+                    fr_comp = _fracao_compensatorios(
+                        ini, fim, premissas.transito_antes_adi2332
+                    )
+                    jcomp = principal * fr_comp
+                    juros += jcomp
+                    detalhe["compensatorios"] = "aplicados"
+                    detalhe["compensatorios_frac"] = fr_comp
+                    detalhe["juros_compensatorios"] = jcomp
+                else:
+                    # Fica no trace para o laudo mostrar que a omissão foi
+                    # deliberada, e não um esquecimento.
+                    detalhe["compensatorios"] = "nao aplicados (opt-in desligado)"
 
         elif regime == "R2":
             soma = indices.soma_selic_linear(conn, SERIE_SELIC, ini, fim)
@@ -251,50 +269,48 @@ def calcular_vf_bruto(
             detalhe = {"soma_selic": soma, "selic_acrescida": base * soma}
 
         else:  # R3
-            # A composição do R3 depende de ONDE ele cai na linha do tempo:
+            # A composição do R3 é definida pela POSIÇÃO do segmento em relação
+            # à expedição do precatório — não pelo ano da LOA:
             #
-            #   PRÉ-EXPEDIÇÃO (correção entre a data base e a expedição, no
-            #   trecho posterior a 01/08/2025) -> IPCA-15 + Taxa Legal.
+            #   PRÉ-EXPEDIÇÃO — o crédito ainda é dívida judicial em curso:
+            #       correção pelo IPCA-E (= IPCA-15) + juros da Taxa Legal.
             #
-            #   PÓS-GRAÇA (precatório expedido e não pago) -> IPCA + juros de
-            #   2% a.a. pro-rata, ou Taxa Legal se a LOA for >= 2027.
+            #   PÓS-GRAÇA — precatório expedido, vencido e não pago:
+            #       correção pelo IPCA (IBGE) + juros de mora de 2% a.a.
             #
-            # Como a janela de graça separa os dois casos no grid mensal, um
-            # segmento de R3 fica inteiramente de um lado ou do outro.
+            # A janela de graça separa os dois casos no grid mensal, então um
+            # segmento de R3 fica inteiramente de um lado ou do outro. Nos dois
+            # casos os juros correm SOMENTE dentro do próprio segmento: é isso
+            # que impede o período de graça (que não gera juros) de ser contado,
+            # e impede que os dois R3 se sobreponham quando ambos existem.
             pre_expedicao = fim < inicio_graca
 
             if pre_expedicao:
                 f = indices.fator_ipca_composto(conn, SERIE_IPCA15, ini, fim)
                 principal *= f; juros *= f; selic *= f
                 fr_j = indices.soma_linear_serie(conn, SERIE_TAXA_LEGAL, ini, fim)
-                j_r3 = principal * fr_j
                 detalhe = {
                     "fator": f, "correcao": "ipca15",
                     "juros_modo": "taxa_legal", "posicao": "pre_expedicao",
-                    "juros_frac": fr_j, "juros_r3": j_r3,
+                    "juros_frac": fr_j,
                 }
             else:
                 f = indices.fator_ipca_composto(conn, SERIE_IPCA, ini, fim)
                 principal *= f; juros *= f; selic *= f
-                if premissas.ano_orcamento >= ANO_LOA_JUROS_TAXA_LEGAL:
-                    fr_j = indices.soma_linear_serie(conn, SERIE_TAXA_LEGAL, ini, fim)
-                    detalhe = {
-                        "fator": f, "correcao": "ipca",
-                        "juros_modo": "taxa_legal", "posicao": "pos_graca",
-                        "juros_frac": fr_j,
-                    }
-                else:
-                    dias = indices.dias_360(
-                        _add_mes(_EC136_MES), indices.fim_do_mes(fim)
-                    )
-                    fr_j = JUROS_EC136_AA * Decimal(dias) / Decimal("360")
-                    detalhe = {
-                        "fator": f, "correcao": "ipca",
-                        "juros_modo": "2pct_prorata", "posicao": "pos_graca",
-                        "dias_360": dias, "juros_frac": fr_j,
-                    }
-                j_r3 = principal * fr_j
-                detalhe["juros_r3"] = j_r3
+                # 2% a.a. pro-rata em dias corridos base 360, do início DESTE
+                # segmento até o fim do mês final. No caso simples (sem R3
+                # pré-expedição) o segmento já começa em ago/2025, o primeiro
+                # mês do regime da EC 136.
+                dias = indices.dias_360(ini, indices.fim_do_mes(fim))
+                fr_j = JUROS_EC136_AA * Decimal(dias) / Decimal("360")
+                detalhe = {
+                    "fator": f, "correcao": "ipca",
+                    "juros_modo": "2pct_prorata", "posicao": "pos_graca",
+                    "dias_360": dias, "juros_frac": fr_j,
+                }
+            # Os juros do R3 incidem APENAS sobre o principal corrigido.
+            j_r3 = principal * fr_j
+            detalhe["juros_r3"] = j_r3
             juros += j_r3
 
         res.trace.append({
@@ -306,6 +322,48 @@ def calcular_vf_bruto(
 
     res.principal, res.juros, res.selic = principal, juros, selic
     return res
+
+
+# ------------------------------------------------------------------ #
+# Depósito judicial: apenas poupança sobre o montante depositado       #
+# ------------------------------------------------------------------ #
+def _calcular_deposito_judicial(
+    conn: sqlite3.Connection,
+    premissas: PremissasAtivo,
+    ate: date | None = None,
+) -> ResultadoVF:
+    """
+    Perfil `deposito_judicial`: o montante depositado rende poupança da data
+    do depósito até a data de cálculo. Nada mais incide — não há correção por
+    regime judicial, expedição, período de graça nem LOA.
+
+    O montante entra como principal; juros e selic ficam zerados, já que não
+    há decomposição a preservar num depósito.
+    """
+    from . import poupanca as _poupanca
+
+    deposito = premissas.data_deposito
+    data_calculo = ate or date.today()
+
+    res_poup = _poupanca.acumular(
+        conn, premissas.valor_principal, deposito, data_calculo
+    )
+
+    trace = [{
+        "regime": "POUPANCA",
+        "de": f"{deposito:%Y-%m}",
+        "ate": f"{data_calculo:%Y-%m}",
+        "data_deposito": deposito.isoformat(),
+        "montante_depositado": premissas.valor_principal,
+        "aniversarios": res_poup.aniversarios,
+        "fator": res_poup.fator,
+        "saldo": res_poup.valor_final,
+        "detalhe": res_poup.trace,
+    }]
+
+    return ResultadoVF(
+        res_poup.valor_final, Decimal("0"), Decimal("0"), data_calculo, trace
+    )
 
 
 # ------------------------------------------------------------------ #

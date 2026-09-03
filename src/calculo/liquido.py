@@ -216,22 +216,29 @@ def calcular_vf_liquido(
     # `aliquota_imposto` permite sobrepor a alíquota legal quando informada.
     irrf_global = Decimal("0")
     if not remuneratoria:
-        aliquota_irrf = (
-            premissas.aliquota_imposto
-            if premissas.aliquota_imposto > 0
-            else IRRF_PRECATORIO_FEDERAL
-        )
-        irrf_global = resultado.saldo * aliquota_irrf
-        descontos.append({
-            "desconto": "IRRF (art. 27 Lei 10.833/2003)",
-            "base": "montante global (principal + juros + selic)",
-            "valor_base": resultado.saldo,
-            "aliquota": aliquota_irrf,
-            "origem_aliquota": (
-                "informada" if premissas.aliquota_imposto > 0 else "legal (3%)"
-            ),
-            "valor": irrf_global,
-        })
+        # Alíquota informada vence sempre. Na ausência dela, aplica-se a
+        # alíquota legal de 3% apenas nos perfis sujeitos à retenção
+        # automática — o depósito judicial, por exemplo, não é.
+        if premissas.aliquota_imposto > 0:
+            aliquota_irrf = premissas.aliquota_imposto
+            origem_irrf = "informada"
+        elif perfil.get("irrf_automatico", True):
+            aliquota_irrf = IRRF_PRECATORIO_FEDERAL
+            origem_irrf = "legal (3%)"
+        else:
+            aliquota_irrf = Decimal("0")
+            origem_irrf = "sem retenção automática neste perfil"
+
+        if aliquota_irrf > 0:
+            irrf_global = resultado.saldo * aliquota_irrf
+            descontos.append({
+                "desconto": "IRRF (art. 27 Lei 10.833/2003)",
+                "base": "montante global (principal + juros + selic)",
+                "valor_base": resultado.saldo,
+                "aliquota": aliquota_irrf,
+                "origem_aliquota": origem_irrf,
+                "valor": irrf_global,
+            })
     elif premissas.aliquota_imposto > 0:
         descontos.append({
             "desconto": "IRRF (art. 27 Lei 10.833/2003)",

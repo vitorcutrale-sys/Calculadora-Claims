@@ -118,62 +118,25 @@ PERFIS = {
     "federal_fazenda_geral": {
         "nome": "Precatório Federal — Ações Condenatórias (Devedor Fazenda Pública)",
         "descricao": (
-            "Mesma lógica encadeada do perfil de servidores, porém o R1 usa a "
-            "tabela TCM_5 (SICOM, Tabela de Correção Monetária da categoria 5 - "
-            "Fazenda Pública) para a correção e a Tabela de Juros de Mora Geral "
-            "(não-tributário) para os juros. R2 (Selic linear), R3 (IPCA + 2%) e "
-            "R_graça (IPCA-E) são idênticos. Obs.: VHI_5 não serve para correção "
-            "(série incompleta, sem dez/2021); usa-se a TCM_5."
+            "Mesma lógica encadeada do perfil de servidores. A CORREÇÃO é a "
+            "mesma: a categoria 5 do SICOM (Devedor Fazenda Pública) e a "
+            "categoria 3 (servidores) estão ambas no Cap. 4, item 4.2.1.1 e são "
+            "numericamente IDÊNTICAS — conferido célula a célula, 0 divergência "
+            "em 743 meses. Por isso este perfil lê a TCM_3, e a TCM_5 saiu da "
+            "coleta. O que separa os dois perfis é a tabela de JUROS (Geral / "
+            "não-tributário, em vez da de servidores) e a tributação: aqui não "
+            "há PSS nem IR-RRA, incide o IRRF de 3% sobre o global. "
+            "R2 (Selic linear), R3 e R_graça são idênticos."
         ),
-        "r1_correcao": "TCM_5",              # SICOM categoria 5 (Fazenda Pública)
+        "r1_correcao": "TCM_3",              # SICOM cat. 3 == cat. 5 (item 4.2.1.1)
         "r1_juros": "JUROS_NAO_TRIBUTARIO",  # Tabela de Juros de Mora Geral (não-tributário)
         "regimes": [
             {
                 "id": "R1",
-                "rotulo": "Pré-EC 113 — SICOM Fazenda Pública (TCM_5)",
+                "rotulo": "Pré-EC 113 — SICOM condenatórias em geral (TCM_3)",
                 "ate": CORTE_EC113,
                 "metodo": "sicom_composto",
-                "fonte": ("CJF", "TCM_5"),
-                "incide_sobre": "principal_e_juros",
-            },
-            {
-                "id": "R2",
-                "rotulo": "EC 113 — Selic linear",
-                "de": CORTE_EC113,
-                "ate": CORTE_EC136,
-                "metodo": "selic_linear",
-                "fonte": ("BACEN", 4390),
-                "incide_sobre": "principal_e_juros",
-            },
-            {
-                "id": "R3",
-                "rotulo": "EC 136 — IPCA composto + juros 2% a.a.",
-                "de": CORTE_EC136,
-                "metodo": "ipca_composto_mais_juros",
-                "fonte": ("BACEN", 433),
-                "juros_aa": JUROS_EC136_AA,
-                "incide_sobre": "principal",
-            },
-        ],
-    },
-    "federal_naofazenda_geral": {
-        "nome": "Precatório Federal — Ações Condenatórias (Devedor não Fazenda Pública)",
-        "descricao": (
-            "Categoria 6 (devedor não enquadrado como Fazenda Pública). R1 usa a "
-            "TCM_6 para a correção e a Tabela de Juros de Mora Geral (não-tributário). "
-            "Nos dados atuais a TCM_6 é proporcional à TCM_5, então o efeito prático "
-            "é igual ao federal_fazenda_geral — perfil separado para receber ajustes "
-            "futuros próprios da categoria."
-        ),
-        "r1_correcao": "TCM_6",              # SICOM categoria 6 (devedor não-Fazenda)
-        "r1_juros": "JUROS_NAO_TRIBUTARIO",  # Tabela de Juros de Mora Geral (não-tributário)
-        "regimes": [
-            {
-                "id": "R1",
-                "rotulo": "Pré-EC 113 — SICOM devedor não-Fazenda (TCM_6)",
-                "ate": CORTE_EC113,
-                "metodo": "sicom_composto",
-                "fonte": ("CJF", "TCM_6"),
+                "fonte": ("CJF", "TCM_3"),
                 "incide_sobre": "principal_e_juros",
             },
             {
@@ -241,14 +204,21 @@ PERFIS = {
         "descricao": (
             "Categoria 1 (desapropriações). Com o precatório JÁ EXPEDIDO "
             "(precatorio_expedido=True), segue exatamente a mesma lógica do perfil "
-            "federal_fazenda_geral (segmentador: R_graça, R1 -> R2 -> R3; nos dados "
-            "atuais a TCM_1 é idêntica à TCM_5). Quando o precatório NÃO foi expedido, "
-            "incidem JUROS COMPENSATÓRIOS simples sobre o principal corrigido dentro "
-            "do R1, no regime definido por transito_antes_adi2332."
+            "federal_fazenda_geral (segmentador: R_graça, R1 -> R2 -> R3). A TCM_1 "
+            "NÃO é intercambiável com a TCM_3: divergem em 327 meses, todos até "
+            "12/1991 — a desapropriação usa IPC-FGV de 03/1991 a 12/1991, enquanto "
+            "as condenatórias usam INPC até 11/1991. De 01/1992 em diante as duas "
+            "coincidem, mas uma data base anterior a 1992 dá resultado diferente. "
+            "Os JUROS COMPENSATÓRIOS são OPT-IN: só incidem quando "
+            "aplicar_juros_compensatorios=True, no regime definido por "
+            "transito_antes_adi2332. O default é não aplicar, porque no caso mais "
+            "comum — precatório expedido com valores tirados do ofício "
+            "requisitório — eles já estão embutidos no montante requisitado, e "
+            "aplicá-los de novo contaria o mesmo juro duas vezes."
         ),
         "r1_correcao": "TCM_1",              # SICOM categoria 1 (desapropriações)
         "r1_juros": "JUROS_NAO_TRIBUTARIO",  # Tabela de Juros de Mora Geral
-        "juros_compensatorios": True,        # habilita compensatórios se não expedido
+        "juros_compensatorios": True,        # perfil SUPORTA compensatórios (opt-in)
         "regimes": [
             {
                 "id": "R1",
@@ -277,6 +247,22 @@ PERFIS = {
                 "incide_sobre": "principal",
             },
         ],
+    },
+    "deposito_judicial": {
+        "nome": "Depósito Judicial",
+        "descricao": (
+            "Montante já depositado em conta judicial, remunerado pela poupança. "
+            "Não há regimes judiciais de correção nem vínculo com orçamento (LOA): "
+            "o valor rende por aniversário mensal do depósito até a data de "
+            "cálculo, com pro-rata em dias úteis (base 252) no período em aberto. "
+            "Exige apenas dois inputs: o montante depositado e a data do depósito."
+        ),
+        "motor": "deposito_judicial",
+        "requer_loa": False,
+        # Sem retenção automática: o depósito judicial não sofre o IRRF de 3%
+        # do art. 27 da Lei 10.833/2003 por padrão. Só há imposto se o usuário
+        # informar `aliquota_imposto` explicitamente.
+        "irrf_automatico": False,
     },
     "federal_tributario": {
         "nome": "Precatório Federal — Repetição de Indébito Tributário",

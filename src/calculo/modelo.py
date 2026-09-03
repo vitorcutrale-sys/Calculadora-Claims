@@ -111,11 +111,30 @@ class PremissasAtivo:
                             NÃO altera a curva bruta pré-expedição (só atua na
                             camada de valor líquido).
         precatorio_expedido : o precatório já foi expedido? (Sim/Não = 1/0).
-                            Usado no perfil de desapropriação: quando False (não
-                            expedido), incidem JUROS COMPENSATÓRIOS dentro do R1.
-                            Nos demais perfis não tem efeito.
+                            Campo informativo do ativo. NÃO decide mais os juros
+                            compensatórios — ver aplicar_juros_compensatorios.
+        aplicar_juros_compensatorios : incidir JUROS COMPENSATÓRIOS sobre o
+                            principal corrigido dentro do R1? (Sim/Não = 1/0).
+                            Só tem efeito em perfis que os suportam (hoje:
+                            federal_desap); informá-lo em outro perfil levanta
+                            erro, para não passar em silêncio.
+
+                            É **opt-in** (default False), e a razão é o formato
+                            do input. Quando o precatório já está expedido e os
+                            valores vêm de um OFÍCIO REQUISITÓRIO, os
+                            compensatórios já estão embutidos no montante
+                            requisitado — aplicá-los de novo contaria o mesmo
+                            juro duas vezes e superavaliaria o ativo. Só se
+                            marca True quando o principal informado ainda NÃO
+                            os contempla (por exemplo, valores tirados da
+                            sentença ou da conta de liquidação).
+
+                            Note que isso é independente de precatorio_expedido:
+                            um precatório expedido cujos valores não vêm de
+                            ofício requisitório pode precisar dos compensatórios,
+                            e um não expedido cujo laudo já os inclui, não.
         transito_antes_adi2332 : o título transitou em julgado ANTES da ADI 2332?
-                            Só relevante quando precatorio_expedido=False:
+                            Só relevante quando aplicar_juros_compensatorios=True:
                               True  -> compensatórios de 1% a.m. simples em todo o R1
                               False -> regime do Manual de Cálculos da JF:
                                        1% a.m. simples até 10/06/1997 e
@@ -135,7 +154,7 @@ class PremissasAtivo:
     valor_principal: Decimal
     valor_juros: Decimal
     data_base: date
-    ano_orcamento: int
+    ano_orcamento: int = 0     # não se aplica a perfis sem LOA (ver perfis.requer_loa)
     pss_percentual: Decimal = Decimal("0")
     pss_valor: Decimal = Decimal("0")
     meses_ir_rra: int = 0
@@ -144,10 +163,38 @@ class PremissasAtivo:
     honorarios_percentual: Decimal = Decimal("0")
     destacamento_honorarios: bool = True
     precatorio_expedido: bool = True
+    aplicar_juros_compensatorios: bool = False
     transito_antes_adi2332: bool = False
     precatorio_depositado: bool = False
     data_deposito: Optional[date] = None
     perfil: str = "federal_servidores"
+
+    # ---- construtor de conveniência ---- #
+    @classmethod
+    def deposito_judicial(
+        cls, montante: Decimal, data_deposito: date, **kwargs
+    ) -> "PremissasAtivo":
+        """
+        Cria as premissas de um DEPÓSITO JUDICIAL a partir dos dois únicos
+        inputs obrigatórios: o montante depositado e a data do depósito.
+
+        O montante entra integralmente como principal e passa a render
+        poupança a partir do depósito. Não há LOA, expedição nem regimes
+        judiciais de correção.
+
+        >>> p = PremissasAtivo.deposito_judicial(Decimal("500000"), date(2024, 3, 15))
+        >>> p.perfil
+        'deposito_judicial'
+        """
+        return cls(
+            valor_principal=montante,
+            valor_juros=Decimal("0"),
+            data_base=data_deposito,
+            precatorio_depositado=True,
+            data_deposito=data_deposito,
+            perfil="deposito_judicial",
+            **kwargs,
+        )
 
     # ---- propriedades derivadas ---- #
     @property
@@ -225,6 +272,31 @@ class PremissasAtivo:
             raise ValueError(
                 "honorarios_percentual deve estar entre 0 e 1 (fração)."
             )
+        # O ano orçamentário só faz sentido nos perfis atrelados a uma LOA.
+        from .perfis import obter_perfil
+
+        perfil = obter_perfil(self.perfil)
+        if perfil.get("requer_loa", True):
+            if self.ano_orcamento < 1988:
+                raise ValueError(
+                    f"ano_orcamento ({self.ano_orcamento}) inválido para o perfil "
+                    f"'{self.perfil}', que depende do orçamento (LOA)."
+                )
+        elif self.data_deposito is None:
+            raise ValueError(
+                f"O perfil '{self.perfil}' exige data_deposito."
+            )
+
+        # Compensatórios são opt-in e só existem em perfis que os suportam.
+        # Marcar o flag num perfil que os ignora é quase sempre erro de input,
+        # então falha alto em vez de devolver um número silenciosamente menor.
+        if self.aplicar_juros_compensatorios and not perfil.get("juros_compensatorios"):
+            raise ValueError(
+                f"aplicar_juros_compensatorios=True não é válido no perfil "
+                f"'{self.perfil}': juros compensatórios só existem em perfis de "
+                f"desapropriação."
+            )
+
         if self.precatorio_depositado:
             if self.data_deposito is None:
                 raise ValueError(
