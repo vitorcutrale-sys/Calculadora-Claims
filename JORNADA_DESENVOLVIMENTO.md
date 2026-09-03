@@ -255,7 +255,7 @@ O "XLS" é, na prática, um **HTML com namespace do Excel** (MHTML) — não um 
 | Formato | PDF binário | HTML disfarçado de XLS |
 | Parser | `pdfplumber` | `re` (stdlib) |
 | Periodicidade | mensal | mensal |
-| Tabelas por execução | 1 | 12 (TCM×6 + VHI×6) |
+| Tabelas por execução | 1 | 4 (uma TCM por metodologia distinta) |
 | Geração | arquivo estático no CMS | arquivo gerado por POST |
 
 ### O parser
@@ -356,7 +356,7 @@ Três descobertas empíricas mudaram o código:
 
 **1. A referência do SICOM.** O coeficiente `coef(dez/2021) = 1` provou que as tabelas TCM no banco estão referenciadas a dez/2021 — então `coef(data_base)` já corrige "até dez/2021". Isso unificou a regra do R1: `fator = coef(início) / coef(mês seguinte ao fim do segmento)`. Na primeira tentativa dividimos por `coef(nov/2021)`, o que **comeu o IPCA-E de novembro/2021** e deixou o resultado ~1,2% abaixo da planilha. Corrigido para fechar em dez/2021, bateu na vírgula.
 
-**2. Qual índice cada TCM usa.** Comparando as razões de coeficientes com os índices do BACEN, o match foi exato na 8ª casa: as categorias **1, 3, 5 e 6 usam IPCA-E** (são a mesma correção — a TCM_6 é apenas proporcional às outras), a **2 (previdenciário) tem índice próprio** (INPC/IGP) e a **4 (tributário) usa Selic**. Isso validou a decisão de compartilhar o segmentador entre as categorias e dar tratamento próprio ao tributário.
+**2. Qual índice cada TCM usa.** Comparando as razões de coeficientes com os índices do BACEN, o match foi exato na 8ª casa: as categorias **1, 3, 5 e 6 usam IPCA-E**, a **2 (previdenciário) tem índice próprio** (INPC/IGP) e a **4 (tributário) usa Selic**. Isso validou a decisão de compartilhar o segmentador entre as categorias e dar tratamento próprio ao tributário. A leitura de que "1, 3, 5 e 6 são a mesma correção" foi revista na Fase 5 (ver *Consolidação dos perfis*): apenas 3 e 5 são idênticas; a 1 diverge em 327 meses até 12/1991 e a 6 não tem a janela da Selic da EC 113.
 
 **3. VHI ≠ TCM.** A tentativa de usar `VHI_5` para correção falhou com erro claro: a série é incompleta (699 fatores, sem dez/2021). As VHI listam *valores históricos de indexadores*, com lacunas; quem serve para correção mensal é a **TCM**. O erro explícito no leitor evitou um cálculo silenciosamente errado.
 
@@ -370,7 +370,9 @@ Três descobertas empíricas mudaram o código:
 
 A última peça foi a série **29543 (Taxa Legal)** do BACEN — art. 406 do Código Civil na redação da Lei 14.905/2024. Ela entrou na coleta diária apenas adicionando uma entrada em `config.SERIES` (a rotina do Task Scheduler itera o dicionário, então nada no agendador mudou). Descobrimos que é uma série **mensal**, publicada desde ago/2024.
 
-Com ela, o R3 ganhou **dois modos de juros**: precatórios de **LOA ≥ 2027** usam a Taxa Legal (soma linear); os anteriores mantêm os **2% a.a. pro-rata** (DAYS360 desde ago/2025). O `trace` do motor registra qual modo foi aplicado, para auditoria.
+Com ela, o R3 ganhou **dois modos de juros**: naquele momento, precatórios de **LOA ≥ 2027** usariam a Taxa Legal (soma linear) e os anteriores manteriam os **2% a.a. pro-rata** (DAYS360 desde ago/2025). O `trace` do motor registra qual modo foi aplicado, para auditoria.
+
+> Esse critério foi **substituído depois** — ver *Consolidação dos perfis e o R3 posicional*. O que decide o modo de juros não é o ano da LOA, mas a posição do trecho em relação à expedição do precatório.
 
 ### Validação
 
@@ -462,7 +464,7 @@ Fechada a poupança, veio um adendo que mudou o R3: o **IPCA-15 com juros da Tax
 | Posição do R3 | Correção | Juros |
 |---------------|----------|-------|
 | Pré-expedição | IPCA-15 (7478) | Taxa Legal (29543) |
-| Pós-graça | IPCA (433) | 2% a.a. pro-rata, ou Taxa Legal se LOA ≥ 2027 |
+| Pós-graça | IPCA (433) | 2% a.a. pro-rata |
 
 A implementação saiu simples porque o segmentador já resolvia o resto: como a janela de graça separa os dois casos no grid mensal, um segmento de R3 fica sempre inteiramente de um lado ou do outro — basta testar se ele termina antes do início da graça. O `trace` passou a registrar a `posicao` aplicada.
 
@@ -475,6 +477,112 @@ Ao implementar, a menção a "IPCA-15" levantou a dúvida: nossa série 7478 est
 Ou seja: a série sempre foi o IPCA-15; só o nome estava trocado. Na praxe forense chama-se "IPCA-E" (o IPCA-E em sentido estrito é o acumulado trimestral do IPCA-15), o que explica a confusão de origem. Consequência prática: o **R_graça já usava o índice correto** desde o início — e o novo R3 pré-expedição reaproveita a mesma série, sem precisar de coleta nova.
 
 A lição que fica: quando uma regra nova menciona um índice por outro nome, vale conferir o dado antes de assumir que é uma fonte diferente. Aqui a verificação evitou tanto uma coleta redundante quanto o risco oposto — usar o índice errado achando que estava certo.
+
+## 11.1 Consolidação dos perfis e o R3 posicional
+
+### A pergunta que começou como curiosidade
+
+Investigando se o formulário do SICOM oferecia uma opção de tabela "com SELIC", encontramos um campo `flagSelic` que não estava no nosso mapeamento da Fase 3 — ele é injetado por AJAX (`ajax.php?acao=getFlagSelic`), não vem no HTML estático. Aceita `0` (NÃO) e `1` (SIM), acompanhado de `anoSelic`/`mesSelic`, que definem o **início** da janela.
+
+O flag existe **só** para os encadeamentos 5 e 6, e os limites do pivô explicam o porquê: 01/2003 a 06/2009 no seq 5, 01/2003 a 08/2024 no seq 6. Não é a Selic da EC 113 — é a do **art. 406 do Código Civil**, que começa com a vigência do CC/2002 e termina em 06/2009 para a Fazenda (Lei 11.960/2009) ou 08/2024 para devedor privado (Lei 14.905/2024). Mecanicamente, o coeficiente **congela** num platô ao longo da janela e uma segunda tabela traz a Selic acumulada por mês; a fórmula da própria planilha é `valor × coef(mês) × (1 + Selic(mês)/100)`.
+
+De brinde, ganhamos um **oráculo**: as 260 células da sub-tabela Selic conferem com a nossa série 4390 do BACEN, **zero divergência**, confirmando a convenção de soma simples e a leitura da célula do mês seguinte à parcela.
+
+### Quantas metodologias existem de verdade
+
+A curiosidade virou revisão de arquitetura quando notamos que o `<select>` de categorias havia encolhido. Medindo célula a célula as 6 tabelas na mesma referência (08/2026, 743 meses):
+
+| Comparação | Meses divergentes | Leitura |
+|------------|------------------:|---------|
+| seq 3 vs seq 5 | **0** de 743 | idênticas |
+| seq 1 vs seq 3 | 327 (todos ≤ 12/1991) | IPC-FGV vs INPC em 1991 |
+| seq 6 vs seq 5 | 731 de 743 | sem a janela da Selic da EC 113 |
+| seq 2 vs seq 5 | 742 de 743 | índices próprios |
+
+Três conclusões, todas contra o que a documentação afirmava:
+
+1. **A TCM_5 era cópia da TCM_3.** Depois da EC 113 a distinção entre "servidores" e "Devedor Fazenda Pública" desapareceu da correção monetária — ambas no Cap. 4, item 4.2.1.1. Foi por isso que o CJF tirou a 5 do formulário.
+2. **A TCM_1 não é intercambiável com a TCM_3**, ao contrário do que o docstring do `federal_desap` dizia. Coincidem de 01/1992 em diante, mas uma data base anterior a 1992 dá resultado diferente.
+3. **A seq 6 não tem janela de Selic** — IPCA-E corrido de 01/2001 até hoje, porque a EC 113 alcança débitos da Fazenda Pública. E devedor não enquadrado como Fazenda Pública **não emite precatório**.
+
+### O corte
+
+O perfil `federal_naofazenda_geral` saiu. Não por redundância — por não pertencer ao problema: sem LOA, sem expedição, sem período de graça, que são a espinha do segmentador. Ele aplicava R2 e R3 sobre uma tabela que não tem esses regimes. Se um dia esse universo precisar de preço, merece motor próprio (art. 406 CC até 08/2024, Lei 14.905/2024 depois), não um perfil de precatório.
+
+Ficamos com **5 perfis de precatório sobre 4 tabelas de correção** — exatamente as 4 metodologias distintas do SICOM. `federal_servidores` e `federal_fazenda_geral` compartilham a TCM_3 e se separam pela tabela de juros e pela tributação, não pela correção. A coleta caiu de 12 tabelas para 4, e o banco de 8.592 para 2.953 fatores: saíram TCM_5, TCM_6 e as 6 VHI, que nenhum perfil consumia.
+
+### O R3 deixou de olhar a LOA
+
+Junto veio a correção conceitual do R3. O critério do ano da LOA era uma aproximação; o que de fato governa é a **expedição do precatório**:
+
+| Posição do R3 | Correção | Juros | Por quê |
+|---------------|----------|-------|---------|
+| Pré-expedição | IPCA-E / IPCA-15 (7478) | Taxa Legal (29543) | crédito ainda é dívida judicial em curso |
+| Pós-graça | IPCA (433) | 2% a.a. pro-rata | precatório vencido e não pago |
+
+A mudança expôs um bug latente que estava anotado desde a fatia 3. Os 2% eram ancorados em **01/08/2025 fixo**. Enquanto só existe um R3, isso é correto — o segmento começa justamente em ago/2025. Mas quando os dois R3 coexistem (precatório de LOA ≥ 2027 mantido além do exercício), a âncora fixa contaria o período de graça inteiro — que não gera juros — mais o trecho pré-expedição, onde os juros da Taxa Legal **já** foram aplicados. Num caso de R3 pós-graça iniciando em 01/2029: **7,83%** com a âncora antiga contra **0,99%** com a nova.
+
+A correção foi ancorar os juros no início do **próprio segmento**. No caso alcançável hoje o resultado é idêntico (360 dias, 2,0000%), e o caso de referência seguiu fechando em **R$ 658.695.807,35** — o mesmo centavo validado contra a planilha-protótipo.
+
+A lição, de novo, é sobre docstring que envelhece: as três afirmações erradas ("1, 3, 5 e 6 são a mesma correção", "TCM_1 é idêntica à TCM_5", "o efeito prático da TCM_6 é igual") eram todas plausíveis e nenhuma quebrava teste nenhum, porque os perfis afetados nunca tinham sido exercitados com data base antiga. Medir contra a fonte custou um script; acreditar teria custado um laudo.
+
+## 11.2 Quatro bugs escondidos atrás de uma pergunta
+
+A pergunta era estreita: *"como você está fazendo a correção do R1? As tabelas do SICOM não estão mais referenciadas em 12/2021 como índice 1, isso alterou a forma como você procura por essa correção?"*
+
+A resposta era "não", e por um motivo que vale registrar: **o R1 usa uma razão**, `coef(início) / coef(mês seguinte ao fim)`. Trocar o mês de referência reescala a tabela inteira por uma constante, que cancela na divisão. Medido em 683 meses, a maior divergência de razão entre a tabela de junho e a de agosto foi `2,85E-7` — o limite das 10 casas decimais que o próprio CJF publica.
+
+O que mudou não foi a busca; foi o *porquê ela funciona*. Na tabela antiga o divisor era exatamente `1`, então a divisão era inócua e o código parecia depender da referência em dez/2021. Hoje o divisor é `1,0466221456` e a divisão faz trabalho de verdade — com o mesmo resultado. A razão é o que dá robustez, não a referência.
+
+Verificar isso, porém, exigiu rodar o coletor de verdade. E aí saíram quatro problemas, nenhum deles visível de fora.
+
+### 1. A coleta estava quebrada, em silêncio
+
+O SICOM abandonou o esquema POST → redirect → download e passou a entregar o arquivo **inline na resposta do POST**. Nosso downloader não encontrava o `window.location.href`, caía num fallback que **adivinhava** a URL do arquivo temporário — e esse caminho hoje responde **200 com a home do site**. Resultado: 4.717 bytes de HTML institucional, parser extraindo zero fatores, nenhuma exceção. A coleta reportaria sucesso sem gravar nada.
+
+O conserto foi ler o corpo do POST, manter o redirect como retaguarda e **eliminar o palpite de URL**. Todo conteúdo passa por uma validação (título da tabela + mínimo de linhas) e a coleta falha alto se não for uma tabela.
+
+A lição: **um fallback que adivinha endereço é pior que não ter fallback.** Ele transforma "mudou o contrato" em "não há dados", que é o modo de falha mais difícil de notar.
+
+### 2. O parser desalinhava meses em linhas parciais
+
+`_extrair_texto_celulas` descartava as células vazias **antes** de atribuir a posição da coluna. Como o mês é a posição (1 = janeiro … 12 = dezembro) e a tabela começa em out/1964, a linha `['1964', '', ..., '', v, v, v]` fazia out/nov/dez de 1964 serem gravados como **jan/fev/mar**.
+
+Medido nas quatro tabelas: exatamente esses 3 meses, nenhum outro mês desalinhado. Impacto prático nulo — os três valores de 1964 são idênticos entre si e nenhum crédito tem data base ali —, mas era registro errado.
+
+É a **mesma armadilha de alinhamento por coluna** da Fase 4, quando os PDFs de juros exigiram `extract_tables()` em vez de `extract_text()`. Duas fontes diferentes, dois formatos diferentes, o mesmo erro conceitual: tratar posição como se fosse sequência.
+
+### 3. O upsert nunca removia linhas obsoletas
+
+As tabelas espelham a publicação mais recente, mas o upsert só insere e atualiza. Quando o CJF mudou o mês de referência, a janela de Selic encurtou de 54 para 45 meses e sobraram **9 linhas órfãs**; e a correção do alinhamento de 1964 deixaria as três linhas erradas convivendo com as certas, em escalas diferentes. Trocado por **substituição** — os arquivos de origem ficam arquivados, então nada deixa de ser reconstituível.
+
+### 4. O SHA-256 deixou de ser estável
+
+O SICOM injeta no arquivo um token novo a cada requisição:
+
+```
+link.download = "2026_08_tabela_de_correcao_monetaria_6a98840f72921";
+```
+
+Duas chamadas idênticas devolvem 48.436 bytes iguais em tudo, menos nisso — então o hash **nunca se repetia**. A idempotência estava morta: cada execução mensal arquivaria outra cópia do mesmo arquivo e reescreveria o banco, e a mensagem "sem mudança desde a última coleta" nunca mais apareceria.
+
+O hash passou a ser calculado sobre o conteúdo normalizado, removendo só essa linha. Normalizar pouco e de forma explícita é deliberado: se o SICOM passar a variar outra coisa, o hash volta a mudar sempre — que é o lado seguro do erro.
+
+### A separação em dois bancos
+
+O pedido que originou tudo isso: os dois componentes das tabelas da JF — fator de correção **composto** e Selic acumulada **linear em percentual** — passaram a viver em bancos distintos, `cjf_fatores` e `cjf_selic`.
+
+A primeira tentativa foi uma coluna `bloco` na mesma tabela. Duas tabelas é melhor: as unidades são diferentes, e com bancos separados `fator_correcao_sicom` não precisa nem filtrar — ler percentual como fator fica estruturalmente impossível, em vez de depender de alguém lembrar do `WHERE`.
+
+A migração merece nota. A tentação era classificar as linhas existentes pela magnitude (fator ≈ 1, percentual ≫ 1). Não funciona: a **cauda** da Selic é pequena — o último mês da janela vale 1,07% no TCM_1/2/3 e exatamente 1,00% no TCM_4, indistinguível de um fator. A verificação do script recusou migrar e apontou isso; a solução foi reler os arquivos arquivados com o parser novo, que separa pelo cabeçalho `SELIC de m/aaaa a m/aaaa`. Exato, e não chute.
+
+E foi essa mesma verificação que revelou o bug nº 3: ao conferir "toda linha do banco reaparece na releitura?", o TCM_4 acusou 12 linhas de diferença. Eram os 11 meses de 1996 que o guarda global de anos descartava, porque 1996 aparece nos **dois** componentes — ali a correção termina e a Selic começa.
+
+### O custo aceito
+
+Com a tabela nova no banco, o caso de referência passou de **R$ 658.695.807,35** para **R$ 658.695.807,31**: quatro centavos, pela precisão da divisão que antes era por `1` exato.
+
+Testamos a alternativa — pedir cada tabela com referência no mês em que seu R1 fecha (12/2021 para TCM_1/2/3, 01/1996 para TCM_4) restaura `coef = 1,0` exato e faz o componente de Selic desaparecer na origem. Decisão registrada: **manter a referência no mês corrente**; quatro centavos em R$ 658 milhões são irrisórios para fins de precisão, e a referência atual preserva a sub-tabela de Selic do CJF como conferência independente.
 
 ## 12. Estado atual do projeto
 
@@ -557,7 +665,7 @@ Os módulos BACEN, CJF e IRPF usam apenas a stdlib.
 |---|------|--------|
 | 1 | Ingestão BACEN (9 séries, incl. Taxa Legal) | ✅ Concluído |
 | 2 | Ingestão TJSP (EC 113/2021) | ✅ Concluído |
-| 3 | Ingestão CJF — SICOM (TCM + VHI × 6 categorias) | ✅ Concluído |
+| 3 | Ingestão CJF — SICOM (4 TCM, uma por metodologia distinta) | ✅ Concluído |
 | 4 | Importação estática das Tabelas de Juros de Mora (3 categorias) | ✅ Concluído |
 | 5 | Motor de cálculo — Valor de Face Bruto (6 perfis federais) | ✅ Concluído |
 | 5.1 | Ingestão semestral da Tabela do IRPF (com vigências) | ✅ Concluído |
@@ -569,7 +677,7 @@ Os módulos BACEN, CJF e IRPF usam apenas a stdlib.
 | 7 | Precatórios estaduais (servidores, desapropriação, tributários, genéricos) | ⏭️ |
 | 8 | Definição de usuários, segurança e auditoria | ⏭️ |
 
-O motor já entrega, para os seis tipos de precatório federal, o **Valor de Face Bruto** e o **Valor Líquido** completo — impostos nas duas trilhas, honorários com base condicional e o share do ativo —, tudo auditável linha a linha. Os próximos passos naturais são: (a) expor a **curva mensal**, com o valor de face de cada mês, que é o que se quer armazenar e exibir; e (b) **persistir** as curvas calculadas no banco, registrando qual perfil e quais versões de tabela geraram cada número.
+O motor já entrega, para os cinco perfis de precatório federal, o **Valor de Face Bruto** e o **Valor Líquido** completo — impostos nas duas trilhas, honorários com base condicional e o share do ativo —, tudo auditável linha a linha. Os próximos passos naturais são: (a) expor a **curva mensal**, com o valor de face de cada mês, que é o que se quer armazenar e exibir; e (b) **persistir** as curvas calculadas no banco, registrando qual perfil e quais versões de tabela geraram cada número.
 
 Depois disso, a atenção volta-se para os **precatórios estaduais**, que serão organizados em quatro classificações (ações de servidores, desapropriação, tributárias e genéricas) — onde as Tabelas Práticas do TJSP, já ingeridas na Fase 2, entram no lugar do SICOM.
 

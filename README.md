@@ -4,7 +4,7 @@ Projeto para construir a base de dados de índices econômicos aplicáveis a pre
 
 - **BACEN SGS** — séries diárias/mensais de IPCA, IPCA-15, IGP-DI, IGP-M, Selic, CDI, TR, Taxa Legal e Poupança, via API JSON.
 - **TJSP — Tabelas Práticas** — PDFs oficiais com fatores acumulados de atualização monetária (atualmente, a Tabela da EC 113/2021).
-- **CJF — SICOM** — Tabelas de Correção Monetária e Valores Históricos dos Indexadores do Conselho da Justiça Federal, para as 6 categorias de ação judicial, via formulário web mensal.
+- **CJF — SICOM** — Tabelas de Correção Monetária do Conselho da Justiça Federal, uma por metodologia de correção realmente distinta (4 das 6 categorias de ação judicial), via formulário web mensal.
 - **Juros de Mora (estático)** — Tabelas históricas de juros de mora em condenações da Fazenda Pública (Servidores, Não Tributário e Tributário), importadas uma única vez a partir de PDFs locais. **Sem coleta periódica**: os juros deixaram de ser aplicados em 09/12/2021 (art. 3º da EC 113/2021).
 - **IRPF — Receita Federal** — Tabela Progressiva Mensal (faixa, alíquota, parcela a deduzir), coletada duas vezes por ano da página oficial, com histórico de **vigências** (a tabela muda por lei, às vezes no meio do ano). Usada no cálculo do IR-RRA.
 - **Poupança por aniversário (BACEN SGS 195)** — períodos de accrual mensal (início, fim e taxa), coletados na rotina diária. Remuneram precatórios **já depositados**.
@@ -70,7 +70,7 @@ Calculadora-Claims/
 | 7811   | TR - Taxa Referencial    | % a.m.    | BCB   | mensal        |
 | 29543  | Taxa Legal               | % a.m.    | BCB   | mensal        |
 
-> **Taxa Legal (29543)** — taxa legal de juros do art. 406 do Código Civil (redação da Lei 14.905/2024 e Resolução CMN 5.171/2024): Selic deduzido o IPCA. Publicada desde ago/2024; usada como juros do regime pós-EC 136 para precatórios da LOA 2027 em diante.
+> **Taxa Legal (29543)** — taxa legal de juros do art. 406 do Código Civil (redação da Lei 14.905/2024 e Resolução CMN 5.171/2024): Selic deduzido o IPCA. Publicada desde ago/2024; usada como juros do R3 **pré-expedição** (trecho posterior a 01/08/2025 entre a data base e a expedição do precatório).
 
 Para acrescentar, remover ou alterar séries, edite o dicionário `SERIES` em `src/config.py` e rode `python coletar_indices.py` novamente — os metadados serão sincronizados automaticamente na tabela `series` do banco.
 
@@ -95,18 +95,44 @@ O CJF (Conselho da Justiça Federal) publica, via [SICOM](https://sicom.cjf.jus.
 | **TCM** | Tabela de Correção Monetária — coeficientes de atualização direta |
 | **VHI** | Valores Históricos dos Indexadores — valores nominais de ORTN, OTN, BTN, UFIR, IPCA-E, Selic etc. |
 
-| `seqEncadeamento` | Tipo de ação |
-|:-----------------:|-------------|
-| 1 | Desapropriações |
-| 2 | Benefício Previdenciário |
-| 3 | Ações Condenatórias em Geral (servidores e empregados públicos) |
-| 4 | Repetição de Indébito Tributário |
-| 5 | Ações Condenatórias em Geral (Devedor Fazenda Pública) |
-| 6 | Ações Condenatórias em Geral (devedor não enquadrado como Fazenda Pública) |
+| `seqEncadeamento` | Tipo de ação | Coletamos? |
+|:-----------------:|-------------|:----------:|
+| 1 | Desapropriações | ✅ TCM_1 |
+| 2 | Benefício Previdenciário | ✅ TCM_2 |
+| 3 | Ações Condenatórias em Geral (servidores e empregados públicos) | ✅ TCM_3 |
+| 4 | Repetição de Indébito Tributário | ✅ TCM_4 |
+| 5 | Ações Condenatórias em Geral (Devedor Fazenda Pública) | ❌ idêntica à 3 |
+| 6 | Ações Condenatórias em Geral (devedor não enquadrado como Fazenda Pública) | ❌ fora do escopo |
 
-São coletadas **12 combinações** (TCM × 6 + VHI × 6), totalizando ~8.400 fatores históricos de 1964 até o mês corrente.
+São coletadas **4 combinações** — uma TCM por metodologia de correção realmente distinta, ~2.950 fatores históricos de 1964 até o mês corrente. A conferência célula a célula contra o SICOM (referência 08/2026, 743 meses) mostrou:
 
-A coleta é **mensal** (as tabelas são publicadas uma vez por mês). O arquivo XLS é um HTML gerado dinamicamente pelo formulário SICOM — o script faz POST ao formulário, segue o redirect e baixa o arquivo gerado. SHA-256 garante que só há reprocessamento quando o CJF publica uma nova versão.
+- **seq 3 e seq 5 são idênticas** — 0 mês divergente. Depois da EC 113 a distinção entre "servidores" e "Devedor Fazenda Pública" deixou de existir na correção monetária (as duas estão no Cap. 4, item 4.2.1.1). Os perfis `federal_servidores` e `federal_fazenda_geral` leem a **mesma** TCM_3 e se separam pela tabela de juros e pela tributação.
+- **seq 1 divergiu em 327 meses, todos até 12/1991** — a desapropriação usa IPC-FGV de 03 a 12/1991, as condenatórias usam INPC até 11/1991. De 01/1992 em diante coincidem. A TCM_1 é necessária.
+- **seq 6 não tem a janela da Selic da EC 113** (IPCA-E corrido), porque a EC 113 alcança débitos da Fazenda Pública. Devedor não enquadrado como Fazenda Pública não emite precatório — fora do escopo deste motor.
+- As **VHI não são consumidas por nenhum perfil** (os cálculos usam os coeficientes das TCM) e saíram da coleta periódica.
+
+### Os dois componentes de cada tabela
+
+Cada publicação do SICOM traz, no mesmo arquivo e com a mesma forma (ano nas linhas, meses nas colunas), **dois componentes de natureza incompatível**. Cada um vai para o seu próprio banco:
+
+| Banco | Componente | Exemplo |
+|-------|-----------|---------|
+| `cjf_fatores` | fator de correção monetária **composto** | `1,0466221456` |
+| `cjf_selic` | Selic acumulada **linear**, em percentual | `43,89` |
+
+O componente de Selic aparece nas categorias com janela de Selic (EC 113 nas condenatórias, previdenciário e desapropriação; art. 406 do CC no indébito tributário). Dentro da janela, os fatores do primeiro componente ficam **congelados num platô** — a correção daquele período está na Selic, não neles.
+
+Estão separados porque **se sobrepõem no mesmo (ano, mês)**: guardados juntos, `43,89` seria lido como se fosse um fator de correção. Separados, isso é estruturalmente impossível — `indices.fator_correcao_sicom` lê `cjf_fatores` e nunca vê a Selic.
+
+A tabela `cjf_selic` **não é usada pelo motor**, que soma a série 4390 do BACEN diretamente. Fica como conferência independente na fonte oficial: a convenção do CJF é que a célula do mês `k` acumula a Selic de `k-1` até o fim da janela (para uma parcela do mês M, lê-se a célula M+1), e ela confere com a 4390 sem divergência em todas as células testadas.
+
+### Mecânica da coleta
+
+A coleta é **mensal** (as tabelas são publicadas uma vez por mês). O arquivo XLS é um HTML gerado dinamicamente pelo formulário SICOM, entregue **inline na resposta do POST**. O download segue o `window.location.href` apenas como retaguarda, para o caso de o SICOM voltar ao esquema antigo, e **nunca adivinha a URL do arquivo temporário** — aquele caminho hoje responde 200 com a home do site, o que fazia o parser extrair zero fatores em silêncio. Todo conteúdo baixado é validado antes de ser gravado; se não parecer uma tabela do SICOM, a coleta **falha com erro claro**.
+
+O SHA-256 garante que só há reprocessamento quando o CJF publica uma nova versão, mas é calculado sobre o conteúdo **normalizado**: o SICOM injeta no arquivo um token novo a cada requisição (`link.download = "..._6a98840f72921"`), então duas chamadas idênticas devolvem bytes diferentes. Sem normalizar, o hash nunca se repetiria e cada execução arquivaria outra cópia do mesmo arquivo.
+
+As duas tabelas espelham a publicação **mais recente**: uma nova versão **substitui** as linhas anteriores em vez de fazer upsert, porque linhas que deixaram de existir têm de sair (quando a janela de Selic encurtou de 54 para 45 meses, um upsert puro deixaria 9 órfãs). Os arquivos de origem ficam preservados em `referencias/cjf/` com o SHA-256 no nome, então qualquer versão anterior continua reconstituível.
 
 Para adicionar ou remover combinações, edite o dicionário `CJF_TABELAS` em `src/config.py`.
 
@@ -322,7 +348,7 @@ Registra início, fim, status (`success` / `partial` / `error`), contagens e men
 
 `UNIQUE (tabela_chave, sha256)` — mesma versão não duplica.
 
-**Tabela `cjf_fatores`** — coeficientes/valores extraídos do CJF
+**Tabelas `cjf_fatores` e `cjf_selic`** — os dois componentes de cada publicação do CJF, com o mesmo formato e bancos separados (ver *Os dois componentes de cada tabela*)
 
 | coluna         | tipo    |
 |----------------|---------|
@@ -330,11 +356,11 @@ Registra início, fim, status (`success` / `partial` / `error`), contagens e men
 | tabela_chave   | TEXT    |
 | ano            | INTEGER |
 | mes            | INTEGER (1..12) |
-| valor          | REAL    |
+| valor          | REAL — fator composto em `cjf_fatores`; % linear em `cjf_selic` |
 | publicacao_id  | INTEGER → cjf_publicacoes.id |
 | atualizado_em  | TEXT    |
 
-`UNIQUE (tabela_chave, ano, mes)` — uma linha por mês/ano em cada tabela.
+`UNIQUE (tabela_chave, ano, mes)` em cada uma — uma linha por mês/ano em cada tabela. Quem corrige valor lê **`cjf_fatores`**; `cjf_selic` é apenas conferência.
 
 **Tabela `juros_publicacoes`** — versões dos PDFs de Juros de Mora importados
 
@@ -451,12 +477,16 @@ O motor segmenta a linha do tempo entre a data base e a data de cálculo, aplica
 
 O **R3 tem duas composições**, conforme onde o trecho cai:
 
+A **expedição do precatório** é o que define a composição. Antes dela o crédito ainda é dívida judicial em curso, e se corrige pelo IPCA-E (= IPCA-15, o índice forense) com os juros da Taxa Legal. Depois do fim do período de graça o crédito é precatório vencido e não pago, e valem o IPCA do IBGE com os juros de mora de 2% a.a. da EC 136. O ano da LOA **não** entra nessa decisão.
+
 | Posição do R3 | Correção | Juros |
 |---------------|----------|-------|
 | **Pré-expedição** — correção entre a data base e a expedição, no trecho posterior a 01/08/2025 | **IPCA-15** (7478) | **Taxa Legal** (29543) |
-| **Pós-graça** — precatório expedido e não pago | IPCA (433) | 2% a.a. pro-rata (DAYS360), ou Taxa Legal se LOA ≥ 2027 |
+| **Pós-graça** — precatório expedido, vencido e não pago | IPCA (433) | 2% a.a. pro-rata (DAYS360) |
 
 Como a janela de graça separa os dois casos no grid mensal, cada segmento de R3 fica inteiramente de um lado ou do outro. O `trace` registra a `posicao` (`pre_expedicao` / `pos_graca`), a `correcao` e o `juros_modo` aplicados.
+
+Nos dois casos os juros correm **somente dentro do próprio segmento**. É isso que impede o período de graça — que não gera juros — de entrar na contagem, e que impede os dois R3 de se sobreporem quando ambos existem (precatório de LOA ≥ 2027 mantido além do exercício). No caso simples, sem R3 pré-expedição, o segmento já começa em ago/2025 e os 2% correm de 01/08/2025, como sempre.
 
 > **Nota sobre a série 7478.** É o **IPCA-15** (variação mensal, coleta encerrada no dia 15) — na praxe forense costuma ser chamada de "IPCA-E", ainda que o IPCA-E em sentido estrito seja o acumulado trimestral do IPCA-15. Conferido contra os valores oficiais: jan/2025 = 0,11% (IPCA-15) vs 0,16% (IPCA).
 
@@ -478,14 +508,22 @@ Datas derivadas do **ano orçamentário** (`src/calculo/modelo.py`):
 | `federal_previdenciario` | 2 — Benefício Previdenciário | TCM_2 | Geral |
 | `federal_servidores` | 3 — Servidores | TCM_3 | Servidor |
 | `federal_tributario` | 4 — Indébito Tributário | TCM_4 | Tributário |
-| `federal_fazenda_geral` | 5 — Devedor Fazenda Pública | TCM_5 | Geral |
-| `federal_naofazenda_geral` | 6 — Devedor não-Fazenda | TCM_6 | Geral |
+| `federal_fazenda_geral` | 5 — Devedor Fazenda Pública | TCM_3 (= TCM_5) | Geral |
+
+São **5 perfis de precatório** sobre **4 tabelas de correção** — exatamente as 4 metodologias distintas do SICOM. `federal_servidores` e `federal_fazenda_geral` compartilham a TCM_3 e diferem em duas coisas: a tabela de juros de mora e a tributação (verba remuneratória → PSS + IR-RRA; as demais → IRRF de 3% sobre o global).
 
 **`federal_tributario` tem regime próprio** (não usa graça nem os cortes EC 113/EC 136): correção TCM_4 + juros de mora até 01/1996 e, a partir daí, **Selic linear somente sobre o principal** (o componente de juros fica fixo).
 
-**`federal_desap`** aceita duas booleanas em `PremissasAtivo`:
-- `precatorio_expedido` — quando `False`, incidem **juros compensatórios simples** sobre o principal corrigido, dentro do R1.
+**`federal_desap`** — os **juros compensatórios são opt-in**, controlados por duas booleanas em `PremissasAtivo`:
+
+- `aplicar_juros_compensatorios` (default **`False`**) — quando `True`, incidem **juros compensatórios simples** sobre o principal corrigido, dentro do R1.
 - `transito_antes_adi2332` — `True`: 1% a.m. em todo o R1; `False`: 1% a.m. até 10/06/1997 e 0,5% a.m. até nov/2021 (de dez/2021 em diante já estão embutidos na Selic / Taxa Legal).
+
+O default é **não aplicar**, e a razão é o formato do input. No caso mais comum — precatório já expedido, com valores tirados do **ofício requisitório** — os compensatórios já estão embutidos no montante requisitado; aplicá-los de novo contaria o mesmo juro duas vezes e superavaliaria o ativo. Só se marca `True` quando o principal informado ainda **não** os contempla (valores da sentença ou da conta de liquidação).
+
+Isso é **independente de `precatorio_expedido`**, que hoje é campo informativo: um precatório expedido cujos valores não vêm de ofício requisitório pode precisar dos compensatórios, e um não expedido cujo laudo já os inclui, não. O `trace` do R1 registra `compensatorios: aplicados` ou `nao aplicados (opt-in desligado)`, para o laudo mostrar que a omissão foi deliberada.
+
+Marcar `aplicar_juros_compensatorios=True` num perfil que não os suporta **levanta `ValueError`** em vez de ser ignorado em silêncio.
 
 Para acrescentar um tipo de ativo, adicione um perfil em `src/calculo/perfis.py` — o motor é genérico e não precisa ser alterado.
 
@@ -593,12 +631,12 @@ Isso evita o acúmulo de erros de ponto flutuante em séries longas — fundamen
 
 1. ✅ Ingestão diária de índices BACEN (8 séries)
 2. ✅ Ingestão de Tabelas Práticas do TJSP (EC 113/2021)
-3. ✅ Ingestão mensal das Tabelas CJF — SICOM (TCM + VHI × 6 categorias)
+3. ✅ Ingestão mensal das Tabelas CJF — SICOM (4 TCM, uma por metodologia distinta)
 4. ✅ Importação estática das Tabelas de Juros de Mora (3 categorias, base histórica)
 5. ✅ Ingestão semestral da Tabela Progressiva Mensal do IRPF (com histórico de vigências)
 6. ✅ Ingestão da poupança por aniversário (SGS 195) e dos feriados bancários (ANBIMA)
 7. 🔄 Motor de cálculo — Valor de Face **Bruto**, **Líquido** e **poupança pós-depósito**
-   dos 6 tipos de precatório federal (concluídos); pendentes: curva mensal e persistência
+   dos 5 perfis de precatório federal (concluídos); pendentes: curva mensal e persistência
 8. ⏭️ Interface (CLI ou Streamlit) para rodar cálculos
 9. ⏭️ Precatórios estaduais (servidores, desapropriação, tributário, genéricos)
 10. ⏭️ Definir usuários finais e segurança/auditoria
