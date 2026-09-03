@@ -44,15 +44,53 @@ def fator_correcao_sicom(
     Coeficiente de correção monetária da tabela SICOM/CJF para o mês/ano de
     `quando`. Para o bloco de servidores, `tabela_chave` = "TCM_3".
 
+    Lê `cjf_fatores`, que guarda SÓ o componente de correção composta. O
+    componente de Selic acumulada (linear, em percentual) da mesma publicação
+    mora em `cjf_selic` — tabela separada justamente para que um percentual
+    não possa ser lido como fator, já que os dois se sobrepõem no mesmo
+    (ano, mês). Ver o schema em src/db.py.
+
     Levanta ValueError se não houver fator para aquele (ano, mês).
     """
     row = conn.execute(
-        "SELECT valor FROM cjf_fatores WHERE tabela_chave = ? AND ano = ? AND mes = ?",
+        "SELECT valor FROM cjf_fatores "
+        "WHERE tabela_chave = ? AND ano = ? AND mes = ?",
         (tabela_chave, quando.year, quando.month),
     ).fetchone()
     if row is None:
         raise ValueError(
-            f"SICOM/CJF '{tabela_chave}' não possui fator para {quando:%Y-%m}."
+            f"SICOM/CJF '{tabela_chave}' não possui fator de correção para "
+            f"{quando:%Y-%m}."
+        )
+    return _d(row[0])
+
+
+def selic_acumulada_sicom(
+    conn: sqlite3.Connection, tabela_chave: str, quando: date
+) -> Decimal:
+    """
+    Percentual de Selic acumulada publicado pelo próprio CJF (`cjf_selic`) —
+    o número que o SICOM manda somar ao valor corrigido dentro da janela de
+    Selic. É LINEAR, ao contrário dos fatores de `cjf_fatores`, que compõem.
+
+    Convenção do CJF (conferida contra a série 4390, 45/45 células sem
+    divergência): a célula rotulada com o mês `k` acumula a Selic de `k-1` até
+    o fim da janela. Ou seja, para uma parcela do mês M lê-se a célula M+1.
+
+    NÃO é usado pelo motor — que soma a série 4390 do BACEN diretamente. Fica
+    disponível como conferência independente, na fonte oficial.
+
+    Levanta ValueError se a tabela não tiver Selic para esse mês.
+    """
+    row = conn.execute(
+        "SELECT valor FROM cjf_selic "
+        "WHERE tabela_chave = ? AND ano = ? AND mes = ?",
+        (tabela_chave, quando.year, quando.month),
+    ).fetchone()
+    if row is None:
+        raise ValueError(
+            f"SICOM/CJF '{tabela_chave}' não possui Selic acumulada para "
+            f"{quando:%Y-%m}."
         )
     return _d(row[0])
 

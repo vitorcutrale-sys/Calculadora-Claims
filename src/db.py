@@ -120,14 +120,25 @@ CREATE TABLE IF NOT EXISTS cjf_publicacoes (
     UNIQUE (tabela_chave, sha256)
 );
 
--- Coeficientes/valores extraídos da publicação mais recente.
+-- As tabelas de correção monetária da JF trazem DOIS componentes no mesmo
+-- arquivo, com a mesma forma (ano × mês) e naturezas incompatíveis. Cada um
+-- vai para a sua própria tabela:
+--
+--   cjf_fatores  fator de correção monetária COMPOSTO (ex.: 1,0466221456)
+--   cjf_selic    percentual de Selic acumulada LINEAR (ex.: 43,89)
+--
+-- Eles se sobrepõem no mesmo (ano, mês), então guardá-los juntos faria um
+-- percentual ser lido como se fosse fator. Separados, isso é estruturalmente
+-- impossível: quem corrige valor lê cjf_fatores e nunca vê a Selic.
+
+-- Fatores de correção monetária composta, da publicação mais recente.
 -- UNIQUE(tabela_chave, ano, mes) garante upsert idempotente.
 CREATE TABLE IF NOT EXISTS cjf_fatores (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     tabela_chave        TEXT NOT NULL,
     ano                 INTEGER NOT NULL,
     mes                 INTEGER NOT NULL,   -- 1..12
-    valor               REAL NOT NULL,
+    valor               REAL NOT NULL,      -- coeficiente composto
     publicacao_id       INTEGER NOT NULL,
     atualizado_em       TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (tabela_chave, ano, mes),
@@ -136,6 +147,32 @@ CREATE TABLE IF NOT EXISTS cjf_fatores (
 
 CREATE INDEX IF NOT EXISTS idx_cjf_fatores_anomes
     ON cjf_fatores(tabela_chave, ano, mes);
+
+-- Selic acumulada LINEAR, em percentual, do segundo componente da mesma
+-- publicação. Presente só nas categorias com janela de Selic (EC 113 nas
+-- condenatórias/previdenciário/desapropriação; art. 406 do CC no indébito
+-- tributário e nas categorias 5 e 6).
+--
+-- Convenção do CJF, conferida contra a série 4390 do BACEN (45/45 células sem
+-- divergência): a célula do mês `k` acumula a Selic de `k-1` até o fim da
+-- janela — para uma parcela do mês M, lê-se a célula M+1.
+--
+-- O motor NÃO usa esta tabela: ele soma a série 4390 diretamente. Fica como
+-- conferência independente, na fonte oficial.
+CREATE TABLE IF NOT EXISTS cjf_selic (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    tabela_chave        TEXT NOT NULL,
+    ano                 INTEGER NOT NULL,
+    mes                 INTEGER NOT NULL,   -- 1..12
+    valor               REAL NOT NULL,      -- percentual acumulado (ex.: 43.89)
+    publicacao_id       INTEGER NOT NULL,
+    atualizado_em       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (tabela_chave, ano, mes),
+    FOREIGN KEY (publicacao_id) REFERENCES cjf_publicacoes(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cjf_selic_anomes
+    ON cjf_selic(tabela_chave, ano, mes);
 
 -- ---------------------------------------------------------------- --
 -- Tabelas de Juros de Mora (importação ESTÁTICA / histórica)        --
@@ -552,25 +589,26 @@ def registrar_publicacao_cjf(
     return cur.lastrowid
 
 
-def upsert_fatores_cjf(
+def _upsert_cjf(
     conn: sqlite3.Connection,
+    destino: str,
     tabela_chave: str,
     publicacao_id: int,
-    fatores: Iterable[tuple[int, int, float]],
+    valores: Iterable[tuple[int, int, float]],
 ) -> int:
-    """Insere ou atualiza fatores CJF (ano, mes, valor). Retorna linhas afetadas."""
+    """Upsert idempotente em cjf_fatores ou cjf_selic (mesmo formato)."""
     afetadas = 0
-    for ano, mes, valor in fatores:
+    for ano, mes, valor in valores:
         cur = conn.execute(
-            """
-            INSERT INTO cjf_fatores
+            f"""
+            INSERT INTO {destino}
                 (tabela_chave, ano, mes, valor, publicacao_id)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(tabela_chave, ano, mes) DO UPDATE SET
                 valor         = excluded.valor,
                 publicacao_id = excluded.publicacao_id,
                 atualizado_em = datetime('now')
-            WHERE cjf_fatores.valor != excluded.valor
+            WHERE {destino}.valor != excluded.valor
             """,
             (tabela_chave, ano, mes, valor, publicacao_id),
         )
@@ -579,18 +617,84 @@ def upsert_fatores_cjf(
     return afetadas
 
 
+def upsert_fatores_cjf(
+    conn: sqlite3.Connection,
+    tabela_chave: str,
+    publicacao_id: int,
+    fatores: Iterable[tuple[int, int, float]],
+) -> int:
+    """
+    Insere ou atualiza FATORES de correção monetária composta (ano, mes, valor).
+    Retorna o número de linhas afetadas.
+    """
+    return _upsert_cjf(conn, "cjf_fatores", tabela_chave, publicacao_id, fatores)
+
+
+def upsert_selic_cjf(
+    conn: sqlite3.Connection,
+    tabela_chave: str,
+    publicacao_id: int,
+    valores: Iterable[tuple[int, int, float]],
+) -> int:
+    """
+    Insere ou atualiza a SELIC ACUMULADA em percentual (ano, mes, valor) —
+    o segundo componente das tabelas da JF. Retorna as linhas afetadas.
+    """
+    return _upsert_cjf(conn, "cjf_selic", tabela_chave, publicacao_id, valores)
+
+
+def substituir_valores_cjf(
+    conn: sqlite3.Connection,
+    tabela_chave: str,
+    publicacao_id: int,
+    fatores: Iterable[tuple[int, int, float]],
+    selic: Iterable[tuple[int, int, float]],
+) -> tuple[int, int]:
+    """
+    SUBSTITUI os dois componentes de uma tabela CJF pelo conteúdo de uma nova
+    publicação. Retorna (n_fatores, n_selic) gravados.
+
+    É substituição, não upsert, porque cjf_fatores e cjf_selic espelham a
+    publicação MAIS RECENTE — e um upsert puro deixaria para trás linhas que
+    deixaram de existir. Isso não é hipotético: quando o CJF mudou o mês de
+    referência, a janela de Selic encurtou de 54 para 45 meses e sobraram 9
+    linhas órfãs; e a correção do alinhamento de colunas de 1964 deixaria as
+    três linhas antigas (jan-mar) convivendo com as certas (out-dez), com
+    valores de escalas diferentes.
+
+    O arquivo de origem de cada publicação fica arquivado em referencias/cjf/,
+    então a versão anterior continua reconstituível.
+    """
+    conn.execute("DELETE FROM cjf_fatores WHERE tabela_chave = ?", (tabela_chave,))
+    conn.execute("DELETE FROM cjf_selic WHERE tabela_chave = ?", (tabela_chave,))
+    n_fatores = _upsert_cjf(
+        conn, "cjf_fatores", tabela_chave, publicacao_id, fatores
+    )
+    n_selic = _upsert_cjf(conn, "cjf_selic", tabela_chave, publicacao_id, selic)
+    return n_fatores, n_selic
+
+
 def resumo_cjf(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Resumo por tabela CJF: contagem, ano mínimo e máximo de fatores."""
+    """
+    Resumo por tabela CJF: contagem de fatores e de valores de Selic, com
+    ano mínimo e máximo de cada componente.
+    """
     cur = conn.execute(
         """
         SELECT
-            tabela_chave,
-            COUNT(*)        AS n_fatores,
-            MIN(ano)        AS primeiro_ano,
-            MAX(ano)        AS ultimo_ano
-        FROM cjf_fatores
-        GROUP BY tabela_chave
-        ORDER BY tabela_chave
+            f.tabela_chave,
+            COUNT(*)                          AS n_fatores,
+            MIN(f.ano)                        AS primeiro_ano,
+            MAX(f.ano)                        AS ultimo_ano,
+            (SELECT COUNT(*) FROM cjf_selic s
+              WHERE s.tabela_chave = f.tabela_chave) AS n_selic,
+            (SELECT MIN(s.ano) FROM cjf_selic s
+              WHERE s.tabela_chave = f.tabela_chave) AS primeiro_ano_selic,
+            (SELECT MAX(s.ano) FROM cjf_selic s
+              WHERE s.tabela_chave = f.tabela_chave) AS ultimo_ano_selic
+        FROM cjf_fatores f
+        GROUP BY f.tabela_chave
+        ORDER BY f.tabela_chave
         """
     )
     return cur.fetchall()

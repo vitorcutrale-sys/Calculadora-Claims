@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+    <meta name="ProgId" content="Excel.Sheet">
+    <meta name="Generator" content="Microsoft Excel 11">
+    <!--[if gte mso 9]>
+    <xml>
+        <o:DocumentProperties>
+            <o:Company>CJF</o:Company>
+            <o:Version>11.6568</o:Version>
+        </o:DocumentProperties>
+    </xml>
+    <![endif]-->
+
+
+    <!--[if gte mso 9]>
+    <xml>
+        <x:ExcelWorkbook>
+            <x:ExcelWorksheets>
+                <x:ExcelWorksheet>
+                    <x:Name>modeloCorMor4</x:Name>
+                    <x:WorksheetOptions>
+                        <x:DefaultRowHeight>225</x:DefaultRowHeight>
+                        <x:Print>
+                            <x:ValidPrinterInfo/>
+                            <x:HorizontalResolution>600</x:HorizontalResolution>
+                            <x:VerticalResolution>600</x:VerticalResolution>
+                        </x:Print>
+                        <x:CodeName>Plan1</x:CodeName>
+                        <x:Selected/>
+                        <x:Panes>
+                            <x:Pane>
+                                <x:Number>3</x:Number>
+                                <x:ActiveRow>12</x:ActiveRow>
+                                <x:ActiveCol>7</x:ActiveCol>
+                            </x:Pane>
+                        </x:Panes>
+                        <x:ProtectContents>False</x:ProtectContents>
+                        <x:ProtectObjects>False</x:ProtectObjects>
+                        <x:ProtectScenarios>False</x:ProtectScenarios>
+                    </x:WorksheetOptions>
+                </x:ExcelWorksheet>
+            </x:ExcelWorksheets>
+            <x:WindowHeight>13170</x:WindowHeight>
+            <x:WindowWidth>15180</x:WindowWidth>
+            <x:WindowTopX>480</x:WindowTopX>
+            <x:WindowTopY>45</x:WindowTopY>
+            <x:ProtectStructure>False</x:ProtectStructure>
+            <x:ProtectWindows>False</x:ProtectWindows>
+        </x:ExcelWorkbook>
+    </xml>
+    <![endif]-->
+
+     
+
+
+<style>/* --- Configurações Globais e Folha do Excel --- */
+        table {
+            mso-displayed-decimal-separator: "\,";
+            mso-displayed-thousand-separator: "\.";
+        }
+        @page {
+            mso-footer-data: "&RPg &P\/&N";
+            margin: .39in .39in .39in .39in;
+            mso-header-margin: 0in;
+            mso-footer-margin: 0in;
+            mso-page-orientation: landscape;
+        }
+        tr { mso-height-source: auto; }
+        col { mso-width-source: auto; }
+        br { mso-data-placement: same-cell; }
+        
+        body { 
+            margin-top: 60px !important; 
+        }
+
+        /* --- Estilos de Células do Excel --- */
+        .style0 {
+            mso-number-format: General;
+            text-align: general;
+            vertical-align: bottom;
+            white-space: nowrap;
+            mso-rotate: 0;
+            mso-background-source: auto;
+            mso-pattern: auto;
+            color: windowtext;
+            font-size: 10.0pt;
+            font-weight: 400;
+            font-style: normal;
+            text-decoration: none;
+            font-family: Arial;
+            mso-generic-font-family: auto;
+            mso-font-charset: 0;
+            border: none;
+            mso-protection: locked visible;
+            mso-style-name: Normal;
+            mso-style-id: 0;
+        }
+        td {
+            mso-style-parent: style0;
+            padding-top: 1px;
+            padding-right: 1px;
+            padding-left: 1px;
+            mso-ignore: padding;
+            color: windowtext;
+            font-size: 10.0pt;
+            font-weight: 400;
+            font-style: normal;
+            text-decoration: none;
+            font-family: Arial;
+            mso-generic-font-family: auto;
+            mso-font-charset: 0;
+            mso-number-format: General;
+            text-align: general;
+            vertical-align: bottom;
+            border: none;
+            mso-background-source: auto;
+            mso-pattern: auto;
+            mso-protection: locked visible;
+            white-space: nowrap;
+            mso-rotate: 0;
+        }
+        
+        /* --- Classes Customizadas --- */
+        .xl { mso-style-parent: style0; font-size: 8.0pt; font-family: Arial, sans-serif; mso-font-charset: 0; }
+        .x2 { mso-style-parent: style0; font-weight: 700; font-family: Arial, sans-serif; mso-font-charset: 0; text-align: center; vertical-align: middle; }
+        .x3 { mso-style-parent: style0; color: gray; font-family: Arial, sans-serif; mso-font-charset: 0; text-align: center; }
+        .x4 { mso-style-parent: style0; font-size: 8.0pt; font-weight: 700; font-family: Arial, sans-serif; mso-font-charset: 0; text-align: center; vertical-align: middle; }
+        .x5 { mso-style-parent: style0; font-size: 8.0pt; font-weight: 700; font-family: Arial, sans-serif; mso-font-charset: 0; text-align: center; vertical-align: middle; border: .5pt solid windowtext; background: #969696; mso-pattern: auto none; }
+        .x6 { mso-style-parent: style0; font-size: 8.0pt; font-weight: 700; font-family: Arial, sans-serif; mso-font-charset: 0; text-align: center; vertical-align: middle; border: .5pt solid windowtext; }
+        .x7 { mso-style-parent: style0; font-size: 7.0pt; font-family: Arial, sans-serif; mso-font-charset: 0; mso-number-format: "\@"; text-align: center; vertical-align: middle; border-top: none; border-right: .5pt solid windowtext; border-bottom: .5pt solid windowtext; border-left: none; }
+        .x8 { mso-style-parent: style0; font-size: 8.0pt; font-weight: 700; font-family: Arial, sans-serif; mso-font-charset: 0; text-align: center; vertical-align: middle; border-top: none; border-right: .5pt solid windowtext; border-bottom: .5pt solid windowtext; border-left: .5pt solid windowtext; background: #DDDDDD; mso-pattern: auto none; }
+        .x9 { mso-style-parent: style0; font-size: 7.0pt; font-family: Arial, sans-serif; mso-font-charset: 0; mso-number-format: "\@"; text-align: center; vertical-align: middle; border-top: none; border-right: .5pt solid windowtext; border-bottom: .5pt solid windowtext; border-left: none; background: #DDDDDD; mso-pattern: auto none; }
+        .x11 { mso-style-parent: style0; font-size: 7.0pt; font-weight: 700; font-family: Arial, sans-serif; mso-font-charset: 0; text-align: left; }
+        .x12 { mso-style-parent: style0; font-size: 7.0pt; font-family: Arial, sans-serif; mso-font-charset: 0; text-align: left; }
+
+        /* --- Interface da Barra de Download --- */
+        #barra-download {
+            position: fixed;
+            top: 0;
+            left: 0;
+            display: flex;
+            justify-content: flex-end;
+            width: 100%;
+            background: #f4f4f4;
+            padding: 12px;
+            border-bottom: 1px solid #ccc;
+            font-family: Arial, sans-serif;
+            z-index: 999999;
+            box-sizing: border-box;
+        }
+        #barra-download button {
+            margin-right: 30px;
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 8px 18px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 4px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #barra-download .icon-box {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid white;
+            border-radius: 2px;
+            position: relative;
+            box-sizing: border-box;
+            background: #28a745;
+        }
+        #barra-download .icon-dot {
+            position: absolute;
+            top: 0;
+            right: 2px;
+            width: 3px;
+            height: 3px;
+            background: white;
+            border-bottom-left-radius: 1px;
+        }
+        #barra-download .icon-arrow {
+            position: absolute;
+            bottom: 0;
+            left: 2px;
+            width: 6px;
+            height: 4px;
+            background: white;
+        }
+
+        /* --- Impressão --- */
+        @media print {
+            #barra-download { display: none !important; }
+            body { margin-top: 0 !important; }
+        }</style></head>
+<body link=blue vlink=purple class=xl><table x:str border=0 cellpadding=0 cellspacing=0 width=895 style='margin: 0 auto;border-collapse:collapse;table-layout:fixed;'>
+<col class=x1 width=35 style='mso-width-source:userset;mso-width-alt:1280;width:26pt'>
+<col class=x1 width=72 span=6 style='mso-width-source:userset;mso-width-alt:2633;width:54pt'>
+<col class=x1 width=68 span=2 style='mso-width-source:userset;mso-width-alt:2486;width:51pt'>
+<col class=x1 width=70 style='mso-width-source:userset;mso-width-alt:2560;width:53pt'>
+<col class=x1 width=72 span=2 style='mso-width-source:userset;mso-width-alt:2633;width:54pt'>
+<col class=x1 width=78 style='mso-width-source:userset;mso-width-alt:2852;width:59pt'>
+<tr height=17 style='height:12.75pt'> <td  colspan=13  height=17 class=x3 style='height:12.75pt; '> MANUAL DE ORIENTAÇÃO DE PROCEDIMENTOS PARA OS CÁLCULOS NA JUSTIÇA FEDERAL - CJF</td></tr>
+<tr height=34 style='mso-height-source:userset;height:25.5pt'><td height=34 class=x2 style='height:25.5pt'  colspan=13> TABELA DE CORREÇÃO MONETÁRIA</td></tr>
+<tr class=x4 height=19 style='mso-height-source:userset;height:14.25pt'><td height=19 class=x2 style='height:14.25pt'  colspan=13> DESAPROPRIAÇÕES</td></tr>
+<tr class=x4 height=19 style='mso-height-source:userset;height:14.25pt'><td height=19 class=x2 style='height:14.25pt'  colspan=13> (Cap. 4, itens 4.5.1.1 e 4.6.1.1)</td></tr>
+<tr class=x4 height=19 style='mso-height-source:userset;height:14.25pt'><td height=19 class=x2 style='height:14.25pt'  colspan=13> </td></tr>
+<tr class=x4 height=19 style='mso-height-source:userset;height:14.25pt'><td height=19 class=x2 style='height:14.25pt'  colspan=13> Tabela válida para: 08/2026</td></tr>
+<tr class=x4 height=18 style='mso-height-source:userset;height:13.5pt'><td height=18 class=x4 style='height:13.5pt'></td><td class=x5>Janeiro</td><td class=x5>Fevereiro</td><td class=x5>Março</td><td class=x5>Abril</td><td class=x5>Maio</td><td class=x5>Junho</td><td class=x5>Julho</td><td class=x5>Agosto</td><td class=x5>Setembro</td><td class=x5>Outubro</td><td class=x5>Novembro</td><td class=x5>Dezembro</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1964">1964</td><td class=x7></td><td class=x7></td><td class=x7></td><td class=x7></td><td class=x7></td><td class=x7></td><td class=x7></td><td class=x7></td><td class=x7></td><td class=x7>0,0082338999</td><td class=x7>0,0082338999</td><td class=x7>0,0082338999</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1965">1965</td><td class=x9>0,0072866370</td><td class=x9>0,0072866370</td><td class=x9>0,0072866370</td><td class=x9>0,0061447014</td><td class=x9>0,0061447014</td><td class=x9>0,0061447014</td><td class=x9>0,0054170394</td><td class=x9>0,0054170394</td><td class=x9>0,0052445222</td><td class=x9>0,0051785534</td><td class=x9>0,0051301557</td><td class=x9>0,0050514723</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1966">1966</td><td class=x7>0,0049601806</td><td class=x7>0,0048292668</td><td class=x7>0,0047594797</td><td class=x7>0,0046783522</td><td class=x7>0,0045043216</td><td class=x7>0,0043132005</td><td class=x7>0,0041438852</td><td class=x7>0,0040302985</td><td class=x7>0,0039190385</td><td class=x7>0,0038102267</td><td class=x7>0,0037123083</td><td class=x7>0,0036288673</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1967">1967</td><td class=x9>0,0035445113</td><td class=x9>3,4625315060</td><td class=x9>3,3912273152</td><td class=x9>3,3416801629</td><td class=x9>3,2922430713</td><td class=x9>3,2340533862</td><td class=x9>3,1451107415</td><td class=x9>3,0677719528</td><td class=x9>3,0216146500</td><td class=x9>3,0072680502</td><td class=x9>2,9865433157</td><td class=x9>2,9448855227</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1968">1968</td><td class=x7>2,8911165454</td><td class=x7>2,8412353076</td><td class=x7>2,8006462318</td><td class=x7>2,7602748647</td><td class=x7>2,7094109646</td><td class=x7>2,6390704876</td><td class=x7>2,5658771958</td><td class=x7>2,5095702290</td><td class=x7>2,4645016227</td><td class=x7>2,4303128457</td><td class=x7>2,3942715677</td><td class=x7>2,3559084181</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1969">1969</td><td class=x9>2,3115945877</td><td class=x9>2,2701681614</td><td class=x9>2,2308046387</td><td class=x9>2,1998129632</td><td class=x9>2,1662457041</td><td class=x9>2,1397868818</td><td class=x9>2,1112563901</td><td class=x9>2,0967404943</td><td class=x9>2,0813700509</td><td class=x9>2,0626001807</td><td class=x9>2,0295538381</td><td class=x9>1,9879043750</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1970">1970</td><td class=x7>1,9442502766</td><td class=x7>1,9015935153</td><td class=x7>1,8641385378</td><td class=x7>1,8432728725</td><td class=x7>1,8265084120</td><td class=x7>1,8096483343</td><td class=x7>1,7822294202</td><td class=x7>1,7665522251</td><td class=x7>1,7500318642</td><td class=x7>1,7294475785</td><td class=x7>1,6973613526</td><td class=x7>1,6620710378</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1971">1971</td><td class=x9>1,6301524295</td><td class=x9>1,6006803890</td><td class=x9>1,5797966081</td><td class=x9>1,5641907145</td><td class=x9>1,5462722857</td><td class=x9>1,5245139643</td><td class=x9>1,4948983154</td><td class=x9>1,4656283235</td><td class=x9>1,4354776711</td><td class=x9>1,4048626380</td><td class=x9>1,3771366317</td><td class=x9>1,3549284057</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1972">1972</td><td class=x7>1,3384102603</td><td class=x7>1,3225023966</td><td class=x7>1,3051038074</td><td class=x7>1,2903776714</td><td class=x7>1,2734147728</td><td class=x7>1,2523041705</td><td class=x7>1,2302255971</td><td class=x7>1,2128295656</td><td class=x7>1,2027315105</td><td class=x7>1,1941841800</td><td class=x7>1,1828616465</td><td class=x7>1,1750963210</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1973">1973</td><td class=x9>1,1618315114</td><td class=x9>1,1504680622</td><td class=x9>1,1385370466</td><td class=x9>1,1250034050</td><td class=x9>1,1122382711</td><td class=x9>1,0982926399</td><td class=x9>1,0862664804</td><td class=x9>1,0766082533</td><td class=x9>1,0676737450</td><td class=x9>1,0573905125</td><td class=x9>1,0502423369</td><td class=x9>1,0413431037</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1974">1974</td><td class=x7>1,0213222428</td><td class=x7>1,0106664933</td><td class=x7>0,9957552208</td><td class=x7>0,9833870681</td><td class=x7>0,9675558074</td><td class=x7>0,9474053528</td><td class=x7>0,9169153587</td><td class=x7>0,8782826582</td><td class=x7>0,8383119447</td><td class=x7>0,8080372837</td><td class=x7>0,7909606072</td><td class=x7>0,7811308150</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1975">1975</td><td class=x9>0,7712532710</td><td class=x9>0,7597250342</td><td class=x9>0,7473134798</td><td class=x9>0,7335322869</td><td class=x9>0,7191807076</td><td class=x9>0,7029710510</td><td class=x9>0,6903580046</td><td class=x9>0,6787486539</td><td class=x9>0,6683360325</td><td class=x9>0,6550437487</td><td class=x9>0,6411196699</td><td class=x9>0,6288780204</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1976">1976</td><td class=x7>0,6175116185</td><td class=x7>0,6058793172</td><td class=x7>0,5926227091</td><td class=x7>0,5788737290</td><td class=x7>0,5646231860</td><td class=x7>0,5483052488</td><td class=x7>0,5325937853</td><td class=x7>0,5193251290</td><td class=x7>0,5052402234</td><td class=x7>0,4891522557</td><td class=x7>0,4721272890</td><td class=x7>0,4582535575</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1977">1977</td><td class=x9>0,4483473956</td><td class=x9>0,4407161548</td><td class=x9>0,4322030298</td><td class=x9>0,4226197157</td><td class=x9>0,4107707618</td><td class=x9>0,3979651967</td><td class=x9>0,3851216053</td><td class=x9>0,3751036363</td><td class=x9>0,3675684086</td><td class=x9>0,3624873397</td><td class=x9>0,3575293061</td><td class=x9>0,3522674733</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1978">1978</td><td class=x7>0,3454976469</td><td class=x7>0,3383562737</td><td class=x7>0,3306919925</td><td class=x7>0,3223797001</td><td class=x7>0,3132308715</td><td class=x7>0,3039685440</td><td class=x7>0,2950795556</td><td class=x7>0,2863168482</td><td class=x7>0,2785769841</td><td class=x7>0,2714860338</td><td class=x7>0,2651905028</td><td class=x7>0,2585699008</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1979">1979</td><td class=x9>0,2519399033</td><td class=x9>0,2463764189</td><td class=x9>0,2407784285</td><td class=x9>0,2349119831</td><td class=x9>0,2264299835</td><td class=x9>0,2180934449</td><td class=x9>0,2110715181</td><td class=x9>0,2054827661</td><td class=x9>0,1997355890</td><td class=x9>0,1920219198</td><td class=x9>0,1835997931</td><td class=x9>0,1756715222</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1980">1980</td><td class=x7>0,1687862558</td><td class=x7>0,1619794212</td><td class=x7>0,1561994901</td><td class=x7>0,1506274681</td><td class=x7>0,1452545588</td><td class=x7>0,1404790732</td><td class=x7>0,1361222688</td><td class=x7>0,1319006795</td><td class=x7>0,1278099424</td><td class=x7>0,1240867430</td><td class=x7>0,1202397803</td><td class=x7>0,1165119558</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1981">1981</td><td class=x9>0,1114949210</td><td class=x9>0,1061849544</td><td class=x9>0,0997045387</td><td class=x9>0,0937951372</td><td class=x9>0,0884861307</td><td class=x9>0,0834776341</td><td class=x9>0,0787526055</td><td class=x9>0,0742950717</td><td class=x9>0,0702221646</td><td class=x9>0,0664351005</td><td class=x9>0,0628522787</td><td class=x9>0,0595757144</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1982">1982</td><td class=x7>0,0566308558</td><td class=x7>0,0539340778</td><td class=x7>0,0513658845</td><td class=x7>0,0489198754</td><td class=x7>0,0463696207</td><td class=x7>0,0439523421</td><td class=x7>0,0416608898</td><td class=x7>0,0393028125</td><td class=x7>0,0367315890</td><td class=x7>0,0343286565</td><td class=x7>0,0320828378</td><td class=x7>0,0301247221</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1983">1983</td><td class=x9>0,0282861488</td><td class=x9>0,0266850097</td><td class=x9>0,0250094156</td><td class=x9>0,0229444103</td><td class=x9>0,0210498999</td><td class=x9>0,0194906425</td><td class=x9>0,0180803898</td><td class=x9>0,0165875286</td><td class=x9>0,0152880514</td><td class=x9>0,0139617022</td><td class=x9>0,0127271601</td><td class=x9>0,0117409263</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1984">1984</td><td class=x7>0,0109116376</td><td class=x7>0,0099377344</td><td class=x7>0,0088492692</td><td class=x7>0,0080447910</td><td class=x7>0,0073873203</td><td class=x7>0,0067835833</td><td class=x7>0,0062120746</td><td class=x7>0,0056319810</td><td class=x7>0,0050922068</td><td class=x7>0,0046084400</td><td class=x7>0,0040926579</td><td class=x7>0,0037239839</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1985">1985</td><td class=x9>0,0033701210</td><td class=x9>0,0029930026</td><td class=x9>0,0027159734</td><td class=x9>0,0024099146</td><td class=x9>0,0021549939</td><td class=x9>0,0019589803</td><td class=x9>0,0017938033</td><td class=x9>0,0016668866</td><td class=x9>0,0015408496</td><td class=x9>0,0014123279</td><td class=x9>0,0012957136</td><td class=x9>0,0011660489</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1986">1986</td><td class=x7>0,0010286246</td><td class=x7>0,0008849906</td><td class=x7>0,7738627745</td><td class=x7>0,7738627745</td><td class=x7>0,7738627745</td><td class=x7>0,7738627745</td><td class=x7>0,7738627745</td><td class=x7>0,7738627745</td><td class=x7>0,7738627745</td><td class=x7>0,7738627745</td><td class=x7>0,7738627745</td><td class=x7>0,7738627745</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1987">1987</td><td class=x9>0,7738627745</td><td class=x9>0,7738627745</td><td class=x9>0,4533836199</td><td class=x9>0,3959176766</td><td class=x9>0,3273135602</td><td class=x9>0,2651563430</td><td class=x9>0,2246691566</td><td class=x9>0,2180183737</td><td class=x9>0,2049814514</td><td class=x9>0,1939624489</td><td class=x9>0,1776538345</td><td class=x9>0,1574389552</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1988">1988</td><td class=x7>0,1379351345</td><td class=x7>0,1183882087</td><td class=x7>0,1003620087</td><td class=x7>0,0865114462</td><td class=x7>0,0725281203</td><td class=x7>0,0615793640</td><td class=x7>0,0515179002</td><td class=x7>0,0415333315</td><td class=x7>0,0344217951</td><td class=x7>0,0277573074</td><td class=x7>0,0218132155</td><td class=x7>0,0171865768</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1989">1989</td><td class=x9>13,3446456616</td><td class=x9>9,3502281821</td><td class=x9>8,4894027439</td><td class=x9>8,0020209651</td><td class=x9>7,4571996292</td><td class=x9>6,7831414798</td><td class=x9>5,4337212669</td><td class=x9>4,2200572154</td><td class=x9>3,2627323203</td><td class=x9>2,3999293919</td><td class=x9>1,7438674788</td><td class=x9>1,2331082444</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1990">1990</td><td class=x7>0,8030662761</td><td class=x7>0,5144249943</td><td class=x7>0,2977336159</td><td class=x7>0,1615308246</td><td class=x7>0,1115544369</td><td class=x7>0,1034156270</td><td class=x7>0,0944003898</td><td class=x7>0,0835993533</td><td class=x7>0,0746222916</td><td class=x7>0,0661779812</td><td class=x7>0,0579491955</td><td class=x7>0,0501377362</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1991">1991</td><td class=x9>0,0423818564</td><td class=x9>0,0353447222</td><td class=x9>0,0290019875</td><td class=x9>0,0272063673</td><td class=x9>0,0250472908</td><td class=x9>0,0233977495</td><td class=x9>0,0209432058</td><td class=x9>0,0184831045</td><td class=x9>0,0160040735</td><td class=x9>0,0136939108</td><td class=x9>0,0110452579</td><td class=x9>0,0088108311</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1992">1992</td><td class=x7>0,0071169880</td><td class=x7>0,0056663717</td><td class=x7>0,0044935375</td><td class=x7>0,0036823363</td><td class=x7>0,0030729676</td><td class=x7>0,0024892468</td><td class=x7>0,0020193457</td><td class=x7>0,0016687423</td><td class=x7>0,0013551606</td><td class=x7>0,0010988086</td><td class=x7>0,0008756847</td><td class=x7>0,0007079106</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1993">1993</td><td class=x9>0,0005732533</td><td class=x9>0,0004427691</td><td class=x9>0,0003494073</td><td class=x9>0,0002773954</td><td class=x9>0,0002178383</td><td class=x9>0,0001691160</td><td class=x9>0,0001297499</td><td class=x9>0,0993051851</td><td class=x9>0,0752349304</td><td class=x9>0,0559850971</td><td class=x9>0,0414199129</td><td class=x9>0,0309330193</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1994">1994</td><td class=x7>0,0226301798</td><td class=x7>0,0162607870</td><td class=x7>0,0116399191</td><td class=x7>0,0081040334</td><td class=x7>0,0057373707</td><td class=x7>0,0039784926</td><td class=x7>7,5636683399</td><td class=x7>7,1887478825</td><td class=x7>6,8459301971</td><td class=x7>6,7363171740</td><td class=x7>6,6105614084</td><td class=x7>6,4207749673</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1995">1995</td><td class=x9>6,2793983646</td><td class=x9>6,2793983646</td><td class=x9>6,2793983646</td><td class=x9>6,0179420384</td><td class=x9>6,0179420384</td><td class=x9>6,0179420384</td><td class=x9>5,6177536665</td><td class=x9>5,6177536665</td><td class=x9>5,6177536665</td><td class=x9>5,3436479795</td><td class=x9>5,3436479795</td><td class=x9>5,3436479795</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1996">1996</td><td class=x7>5,1276322835</td><td class=x7>5,1276322835</td><td class=x7>5,1276322835</td><td class=x7>5,1276322835</td><td class=x7>5,1276322835</td><td class=x7>5,1276322835</td><td class=x7>4,8030619118</td><td class=x7>4,8030619118</td><td class=x7>4,8030619118</td><td class=x7>4,8030619118</td><td class=x7>4,8030619118</td><td class=x7>4,8030619118</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1997">1997</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td><td class=x9>4,6654247621</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="1998">1998</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td><td class=x7>4,4212557209</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="1999">1999</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td><td class=x9>4,3493028386</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2000">2000</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td><td class=x7>3,9932984431</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2001">2001</td><td class=x9>3,7659994022</td><td class=x9>3,7424221427</td><td class=x9>3,7238031270</td><td class=x9>3,7104455231</td><td class=x9>3,6919855952</td><td class=x9>3,6739830781</td><td class=x9>3,6600747939</td><td class=x9>3,6259904833</td><td class=x9>3,5837027904</td><td class=x9>3,5701362726</td><td class=x9>3,5569754633</td><td class=x9>3,5221066079</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2002">2002</td><td class=x7>3,5028409825</td><td class=x7>3,4812571880</td><td class=x7>3,4660067582</td><td class=x7>3,4521979664</td><td class=x7>3,4254792284</td><td class=x7>3,4111523883</td><td class=x7>3,3999326107</td><td class=x7>3,3739531713</td><td class=x7>3,3405476944</td><td class=x7>3,3199639181</td><td class=x7>3,2903507612</td><td class=x7>3,2233059965</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2003">2003</td><td class=x9>3,1279048971</td><td class=x9>3,0671748354</td><td class=x9>3,0014432287</td><td class=x9>2,9676124468</td><td class=x9>2,9341629887</td><td class=x9>2,9094328098</td><td class=x9>2,9030461084</td><td class=x9>2,9082810142</td><td class=x9>2,9004497998</td><td class=x9>2,8840109374</td><td class=x9>2,8651012690</td><td class=x9>2,8602388630</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2004">2004</td><td class=x7>2,8471420097</td><td class=x7>2,8279122067</td><td class=x7>2,8026880146</td><td class=x7>2,7915219269</td><td class=x7>2,7856720156</td><td class=x7>2,7707101807</td><td class=x7>2,7552806093</td><td class=x7>2,7298926080</td><td class=x7>2,7084954936</td><td class=x7>2,6952885796</td><td class=x7>2,6866911678</td><td class=x7>2,6698709806</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2005">2005</td><td class=x9>2,6476308812</td><td class=x9>2,6297485908</td><td class=x9>2,6104313985</td><td class=x9>2,6013267548</td><td class=x9>2,5822183391</td><td class=x9>2,5609623516</td><td class=x9>2,5578928801</td><td class=x9>2,5550822896</td><td class=x9>2,5479480351</td><td class=x9>2,5438778306</td><td class=x9>2,5297114465</td><td class=x9>2,5101324137</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2006">2006</td><td class=x7>2,5006300196</td><td class=x7>2,4879415179</td><td class=x7>2,4750711479</td><td class=x7>2,4659471435</td><td class=x7>2,4617621478</td><td class=x7>2,4551332879</td><td class=x7>2,4588215202</td><td class=x7>2,4593133829</td><td class=x7>2,4546495487</td><td class=x7>2,4534228373</td><td class=x7>2,4463284847</td><td class=x7>2,4373104361</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2007">2007</td><td class=x9>2,4288096025</td><td class=x9>2,4162451278</td><td class=x9>2,4051812939</td><td class=x9>2,3953603166</td><td class=x9>2,3901020920</td><td class=x9>2,3839039417</td><td class=x9>2,3770106110</td><td class=x9>2,3713194443</td><td class=x9>2,3614015578</td><td class=x9>2,3545732952</td><td class=x9>2,3489358492</td><td class=x9>2,3435456941</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2008">2008</td><td class=x7>2,3272549097</td><td class=x7>2,3110773681</td><td class=x7>2,2963805327</td><td class=x7>2,2911109775</td><td class=x7>2,2776727085</td><td class=x7>2,2649887714</td><td class=x7>2,2447857001</td><td class=x7>2,2307320879</td><td class=x7>2,2229517568</td><td class=x7>2,2171870704</td><td class=x7>2,2105554042</td><td class=x7>2,1997764993</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2009">2009</td><td class=x9>2,1934155941</td><td class=x9>2,1846768865</td><td class=x9>2,1709995891</td><td class=x9>2,1686141136</td><td class=x9>2,1608351072</td><td class=x9>2,1481609576</td><td class=x9>2,1400288479</td><td class=x9>2,1353311195</td><td class=x9>2,1304311279</td><td class=x9>2,1263909850</td><td class=x9>2,1225703584</td><td class=x9>2,1132719617</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2010">2010</td><td class=x7>2,1052719284</td><td class=x7>2,0943811464</td><td class=x7>2,0748772998</td><td class=x7>2,0635278964</td><td class=x7>2,0536702791</td><td class=x7>2,0408131562</td><td class=x7>2,0369429645</td><td class=x7>2,0387778646</td><td class=x7>2,0397977635</td><td class=x7>2,0334939323</td><td class=x7>2,0209639558</td><td class=x7>2,0037318618</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2011">2011</td><td class=x9>1,9900008559</td><td class=x9>1,9749909248</td><td class=x9>1,9560175546</td><td class=x9>1,9443514459</td><td class=x9>1,9294943395</td><td class=x9>1,9160817671</td><td class=x9>1,9116848918</td><td class=x9>1,9097751167</td><td class=x9>1,9046326087</td><td class=x9>1,8945912749</td><td class=x9>1,8866672724</td><td class=x9>1,8780283420</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2012">2012</td><td class=x7>1,8675699503</td><td class=x7>1,8555091409</td><td class=x7>1,8457267889</td><td class=x7>1,8411239789</td><td class=x7>1,8332410425</td><td class=x7>1,8239389538</td><td class=x7>1,8206617626</td><td class=x7>1,8146733406</td><td class=x7>1,8076236085</td><td class=x7>1,7989884639</td><td class=x7>1,7873705553</td><td class=x7>1,7777705941</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2013">2013</td><td class=x9>1,7655880366</td><td class=x9>1,7501863963</td><td class=x9>1,7383655109</td><td class=x9>1,7298890545</td><td class=x9>1,7211113864</td><td class=x9>1,7132305260</td><td class=x9>1,7067448954</td><td class=x9>1,7055510097</td><td class=x9>1,7028264873</td><td class=x9>1,6982412360</td><td class=x9>1,6901286186</td><td class=x9>1,6805494865</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2014">2014</td><td class=x7>1,6680391926</td><td class=x7>1,6569377099</td><td class=x7>1,6454197715</td><td class=x7>1,6334952562</td><td class=x7>1,6208526058</td><td class=x7>1,6115058718</td><td class=x7>1,6039672258</td><td class=x7>1,6012451091</td><td class=x7>1,5990065000</td><td class=x7>1,5927946011</td><td class=x7>1,5851857097</td><td class=x7>1,5791848074</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2015">2015</td><td class=x9>1,5668070319</td><td class=x9>1,5529854613</td><td class=x9>1,5326018566</td><td class=x9>1,5138303601</td><td class=x9>1,4978038588</td><td class=x9>1,4888706350</td><td class=x9>1,4742753094</td><td class=x9>1,4656281036</td><td class=x9>1,4593528862</td><td class=x9>1,4536835205</td><td class=x9>1,4441521165</td><td class=x9>1,4319802841</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2016">2016</td><td class=x7>1,4152799803</td><td class=x7>1,4023781018</td><td class=x7>1,3827431491</td><td class=x7>1,3768228110</td><td class=x7>1,3698366441</td><td class=x7>1,3581564982</td><td class=x7>1,3527455162</td><td class=x7>1,3454799246</td><td class=x7>1,3394523888</td><td class=x7>1,3363787178</td><td class=x7>1,3338444134</td><td class=x7>1,3303854113</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2017">2017</td><td class=x9>1,3278624726</td><td class=x9>1,3237588203</td><td class=x9>1,3166489161</td><td class=x9>1,3146769008</td><td class=x9>1,3119218648</td><td class=x9>1,3087807910</td><td class=x9>1,3066900868</td><td class=x9>1,3090463703</td><td class=x9>1,3044806879</td><td class=x9>1,3030473358</td><td class=x9>1,2986319870</td><td class=x9>1,2944896203</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2018">2018</td><td class=x7>1,2899747088</td><td class=x7>1,2849633517</td><td class=x7>1,2800989756</td><td class=x7>1,2788201554</td><td class=x7>1,2761402609</td><td class=x7>1,2743561623</td><td class=x7>1,2603660986</td><td class=x7>1,2523510518</td><td class=x7>1,2507251092</td><td class=x7>1,2496004688</td><td class=x7>1,2423945802</td><td class=x7>1,2400385070</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2019">2019</td><td class=x9>1,2420257482</td><td class=x9>1,2383108158</td><td class=x9>1,2341148254</td><td class=x9>1,2274863988</td><td class=x9>1,2187116748</td><td class=x9>1,2144610611</td><td class=x9>1,2137328214</td><td class=x9>1,2126414441</td><td class=x9>1,2116721064</td><td class=x9>1,2105825821</td><td class=x9>1,2094940374</td><td class=x9>1,2078031131</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2020">2020</td><td class=x7>1,1952529570</td><td class=x7>1,1868264890</td><td class=x7>1,1842212023</td><td class=x7>1,1839844054</td><td class=x7>1,1841028157</td><td class=x7>1,1911304856</td><td class=x7>1,1908923071</td><td class=x7>1,1873303162</td><td class=x7>1,1846057230</td><td class=x7>1,1792988780</td><td class=x7>1,1683167011</td><td class=x7>1,1589293731</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2021">2021</td><td class=x9>1,1467735733</td><td class=x9>1,1378979691</td><td class=x9>1,1324621508</td><td class=x9>1,1220272969</td><td class=x9>1,1153352852</td><td class=x9>1,1104493082</td><td class=x9>1,1013084481</td><td class=x9>1,0934357110</td><td class=x9>1,0837899802</td><td class=x9>1,0715740362</td><td class=x9>1,0588676247</td><td class=x9>1,0466221456</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2022">2022</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2023">2023</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2024">2024</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td><td class=x7>1,0466221456</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2025">2025</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0466221456</td><td class=x9>1,0416223582</td><td class=x9>1,0397508068</td><td class=x9>1,0376754559</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2026">2026</td><td class=x7>1,0350877365</td><td class=x7>1,0330216932</td><td class=x7>1,0244165938</td><td class=x7>1,0199289066</td><td class=x7>1,0109316152</td><td class=x7>1,0047024599</td><td class=x7>1,0006000000</td><td class=x7>1,0000000000</td><td class=x7></td><td class=x7></td><td class=x7></td><td class=x7></td></tr>
+<tr class=x4 height=19 style='mso-height-source:userset;height:14.25pt'><td height=19 class=x2 style='height:14.25pt'  colspan=13> </td></tr>
+<tr class=x4 height=19 style='mso-height-source:userset;height:14.25pt'><td height=19 class=x2 style='height:14.25pt'  colspan=13> SELIC de 1/2022 a 9/2025</td></tr>
+<tr class=x4 height=18 style='mso-height-source:userset;height:13.5pt'><td height=18 class=x4 style='height:13.5pt'></td><td class=x5>Janeiro</td><td class=x5>Fevereiro</td><td class=x5>Março</td><td class=x5>Abril</td><td class=x5>Maio</td><td class=x5>Junho</td><td class=x5>Julho</td><td class=x5>Agosto</td><td class=x5>Setembro</td><td class=x5>Outubro</td><td class=x5>Novembro</td><td class=x5>Dezembro</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2022">2022</td><td class=x7>43,89%</td><td class=x7>43,12%</td><td class=x7>42,39%</td><td class=x7>41,63%</td><td class=x7>40,70%</td><td class=x7>39,87%</td><td class=x7>38,84%</td><td class=x7>37,82%</td><td class=x7>36,79%</td><td class=x7>35,62%</td><td class=x7>34,55%</td><td class=x7>33,53%</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2023">2023</td><td class=x9>32,51%</td><td class=x9>31,39%</td><td class=x9>30,27%</td><td class=x9>29,35%</td><td class=x9>28,18%</td><td class=x9>27,26%</td><td class=x9>26,14%</td><td class=x9>25,07%</td><td class=x9>24,00%</td><td class=x9>22,86%</td><td class=x9>21,89%</td><td class=x9>20,89%</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x6 style='height:14.25pt' x:num="2024">2024</td><td class=x7>19,97%</td><td class=x7>19,08%</td><td class=x7>18,11%</td><td class=x7>17,31%</td><td class=x7>16,48%</td><td class=x7>15,59%</td><td class=x7>14,76%</td><td class=x7>13,97%</td><td class=x7>13,06%</td><td class=x7>12,19%</td><td class=x7>11,35%</td><td class=x7>10,42%</td></tr>
+<tr height=15 style='height:11.25pt'><td height=19 class=x8 style='height:14.25pt' x:num="2025">2025</td><td class=x9>9,63%</td><td class=x9>8,70%</td><td class=x9>7,69%</td><td class=x9>6,70%</td><td class=x9>5,74%</td><td class=x9>4,68%</td><td class=x9>3,54%</td><td class=x9>2,44%</td><td class=x9>1,16%</td><td class=x9></td><td class=x9></td><td class=x9></td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'></td><td colspan=8 class=x12></td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'>Observações</td><td colspan=8 class=x12></td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'>1) Indexadores</td><td colspan=8 class=x12> 2) Fórmula de atualização: Valor em moeda da época X coeficiente de mês/ano. Após esta atualização, incluir a respectiva taxa SELIC.</td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - ORTN de 10/1964 a 02/1986</td><td colspan=4 class=x12>   Ex1: Atualizar o seguinte valor - 10/1964 Cr$ 10.000,00</td><td colspan=4 class=x11></td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - OTN (6,17019) de 03/1986 a 01/1989</td><td colspan=4 class=x12>     A) Valor em moeda da época:</td><td colspan=4 class=x11>10.000,00</td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - IPC (IBGE) 01/89 e 02/89 de 01/1989 a 02/1989</td><td colspan=4 class=x12>     B) Coeficiente do mês/ano:</td><td colspan=4 class=x11>0,0082338999</td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - BTN de 03/1989 a 03/1990</td><td colspan=4 class=x12>     C) Principal = (A x B):</td><td colspan=4 class=x11>82,33</td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - IPC (IBGE) de 03/1990 a 02/1991</td><td colspan=4 class=x12>     D) Taxa SELIC:</td><td colspan=4 class=x11>43,89%</td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - IPC (FGV) de 03/1991 a 12/1991</td><td colspan=4 class=x12>     E) Juros SELIC = C x (D/100):</td><td colspan=4 class=x11>36,13</td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - UFIR de 01/1992 a 12/2000</td><td colspan=4 class=x12>     F) TOTAL DEVIDO em REAL (R$) = (C + E):</td><td colspan=4 class=x11>118,46</td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - IPCA-E do ano de 2000 em 12/2000</td><td colspan=4 class=x12></td><td colspan=4 class=x11></td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - IPCA-E de 01/2001 a 11/2021</td><td colspan=4 class=x12>3) As parcelas com competência a partir de 12/2021 devem ser atualizadas com base no total da SELIC do mês seguinte à respectiva parcela.</td><td colspan=4 class=x11></td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - SELIC de 12/2021 a 08/2025</td><td colspan=8 class=x12></td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'> - IPCA-E de 09/2025 a 07/2026</td><td colspan=4 class=x12></td><td colspan=4 class=x11></td></tr>
+<tr height=15 style='height:11.25pt'><td colspan=5 height=15 class=x12 style='height:11.25pt'></td><td colspan=4 class=x12></td><td colspan=4 class=x11></td></tr>
+</table>
+
+  <div id="barra-download" style="position: fixed; top: 0; left: 0;display: flex; justify-content: flex-end;  width: 100%; background: #f4f4f4; padding: 12px; border-bottom: 1px solid #ccc; font-family: Arial, sans-serif;  z-index: 999999;">
+        <button onclick="baixarArquivo()" style="margin-right: 30px;background: #28a745; color: white; border: none; padding: 8px 18px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; gap: 8px;">
+            <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid white; border-radius: 2px; position: relative; box-sizing: border-box; background: #28a745;">
+                <span style="position: absolute; top: 0; right: 2px; width: 3px; height: 3px; background: white; border-bottom-left-radius: 1px;"></span>
+                <span style="position: absolute; bottom: 0; left: 2px; width: 6px; height: 4px; background: white;"></span>
+            </span>
+            Baixar como arquivo Excel (.xls)
+        </button>
+    </div>
+            
+    <script>
+    function baixarArquivo() {
+        var barra = document.getElementById("barra-download");
+        barra.remove();
+            
+        var htmlCompleto = document.documentElement.outerHTML;
+            
+        // Garante que se houver menção ao charset antigo no HTML, ele seja interpretado como UTF-8 no Excel
+        htmlCompleto = htmlCompleto.replace(/charset=iso-8859-1/g, "charset=utf-8");
+            
+        // CORREÇÃO AQUI: Adicionamos o BOM do UTF-8 (\uFEFF) antes do conteúdo HTML
+        var blob = new Blob(["\uFEFF", htmlCompleto], { type: "application/vnd.ms-excel;charset=utf-8" });
+            
+        var link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "2026_08_tabela_de_correcao_monetaria_6a987f7076a96";
+            
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+            
+        document.body.insertBefore(barra, document.body.firstChild);
+    }
+    </script>
+            
+    <style>
+        /* Desloca o conteúdo da planilha para baixo para não sumir sob a barra fixa */
+        body { margin-top: 60px !important; }
+            
+        @media print {
+            #barra-download { display: none !important; }
+            body { margin-top: 0 !important; }
+        }
+    </style>
+    
+</body></html>

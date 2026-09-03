@@ -85,12 +85,26 @@ def imprimir_resumo() -> None:
 
     if linhas_cjf:
         print("\n=== Resumo das Tabelas CJF ===")
-        print(f"{'Tabela':<16} | {'Fatores':>8} | {'1º ano':>7} | {'Últ. ano':>8}")
-        print("-" * 52)
+        print("Dois componentes por publicação, em bancos separados:")
+        print("  correção = fator composto (cjf_fatores) | "
+              "Selic = % acumulado linear (cjf_selic)")
+        print(
+            f"{'Tabela':<10} | {'Correção':>8} | {'anos':<11} | "
+            f"{'Selic':>6} | {'anos':<11}"
+        )
+        print("-" * 60)
         for r in linhas_cjf:
+            anos_cor = "{}..{}".format(r["primeiro_ano"], r["ultimo_ano"])
+            if r["n_selic"]:
+                selic = str(r["n_selic"])
+                anos_selic = "{}..{}".format(
+                    r["primeiro_ano_selic"], r["ultimo_ano_selic"]
+                )
+            else:
+                selic, anos_selic = "-", "-"
             print(
-                f"{r['tabela_chave']:<16} | {r['n_fatores']:>8} | "
-                f"{r['primeiro_ano']:>7} | {r['ultimo_ano']:>8}"
+                f"{r['tabela_chave']:<10} | {r['n_fatores']:>8} | {anos_cor:<11} | "
+                f"{selic:>6} | {anos_selic:<11}"
             )
 
     if linhas_juros:

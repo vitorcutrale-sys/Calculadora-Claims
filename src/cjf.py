@@ -45,6 +45,21 @@ logger = logging.getLogger(__name__)
 # Tipos                                                               #
 # ------------------------------------------------------------------ #
 @dataclass
+class TabelaCJF:
+    """
+    Os dois componentes de uma tabela de correção monetária da JF, separados.
+
+    fatores : fator de correção COMPOSTO      -> banco cjf_fatores
+    selic   : Selic acumulada LINEAR (em %)   -> banco cjf_selic
+
+    Ambos como (ano, mes, valor). `selic` fica vazio nas tabelas que não têm
+    janela de Selic.
+    """
+    fatores: list[tuple[int, int, float]]
+    selic: list[tuple[int, int, float]] = field(default_factory=list)
+
+
+@dataclass
 class ResultadoCJF:
     """Resultado da coleta de uma tabela CJF."""
     tabela_chave: str          # ex.: "TCM_3", "VHI_2"
@@ -54,7 +69,8 @@ class ResultadoCJF:
     ano_referencia: int
     sha256: str
     caminho_arquivo: Path
-    fatores: list[tuple[int, int, float]]  # (ano, mes, valor)
+    fatores: list[tuple[int, int, float]]   # correção composta -> cjf_fatores
+    selic: list[tuple[int, int, float]]     # Selic linear (%)  -> cjf_selic
     mudou: bool
 
 
@@ -71,6 +87,20 @@ _NOME_ARQUIVO = {
 }
 
 
+def _parece_tabela(conteudo: bytes) -> bool:
+    """
+    O conteúdo é de fato uma tabela do SICOM (e não a home do site, uma
+    página de erro ou um arquivo temporário vazio)?
+
+    Checagem deliberadamente barata e explícita: o título da tabela e um
+    número mínimo de linhas. Serve para não gravar lixo com hash novo.
+    """
+    txt = conteudo.decode("latin-1", errors="replace")
+    tem_titulo = ("TABELA DE CORRE" in txt.upper()
+                  or "VALORES HIST" in txt.upper())
+    return tem_titulo and len(re.findall(r"<tr", txt, re.I)) >= 20
+
+
 def _post_formulario(
     tipo_tabela: str,
     seq_encadeamento: int,
@@ -78,11 +108,19 @@ def _post_formulario(
     ano: int,
 ) -> bytes:
     """
-    Faz POST ao formulário SICOM e baixa o XLS gerado.
+    Faz POST ao formulário SICOM e devolve o conteúdo do XLS.
 
-    Estratégia de dois passos:
-    1. POST retorna um HTML com window.location.href para o arquivo temporário.
-    2. Baixamos esse arquivo diretamente.
+    O SICOM serve o arquivo de duas formas, e tentamos nesta ordem:
+
+    1. **Inline na resposta do POST** (comportamento atual, desde ~jul/2026):
+       o corpo da resposta JÁ É o arquivo, com `Content-Disposition: inline`.
+    2. **Redirect** (comportamento antigo): a resposta é um HTML com
+       `window.location.href` apontando para um arquivo em `arquivos/temp/`.
+
+    A tentativa 2 fica como retaguarda caso o SICOM volte atrás. O que NÃO
+    fazemos mais é adivinhar a URL do temp por convenção: aquele caminho
+    (`arquivos/temp/{ano}_{mes}_{nome}.xls`) hoje responde 200 com a HOME do
+    site, o que fazia o parser extrair zero fatores em silêncio.
     """
     dados = urllib.parse.urlencode({
         "acao": "geraTabelaIndice",
@@ -101,33 +139,67 @@ def _post_formulario(
 
     req = urllib.request.Request(_FORM_URL, data=dados, headers=headers)
     with urllib.request.urlopen(req, timeout=config.TIMEOUT_SEGUNDOS) as resp:
-        html_resposta = resp.read().decode("latin-1", errors="replace")
+        corpo = resp.read()
 
-    m = _RE_REDIRECT.search(html_resposta)
+    # 1) o arquivo veio inline?
+    if _parece_tabela(corpo):
+        logger.info(
+            "CJF: arquivo recebido inline na resposta do POST (%d bytes).",
+            len(corpo),
+        )
+        return corpo
+
+    # 2) retaguarda: seguir o redirect, se houver
+    m = _RE_REDIRECT.search(corpo.decode("latin-1", errors="replace"))
     if not m:
-        # URL direta por convenção: {ano}_{mes:02d}_{nome_base}.xls
-        caminho_relativo = (
-            f"arquivos/temp/{ano}_{mes:02d}_{_NOME_ARQUIVO[tipo_tabela]}.xls"
+        raise ValueError(
+            f"CJF {tipo_tabela}_{seq_encadeamento} ({mes:02d}/{ano}): a resposta "
+            f"do POST não é uma tabela ({len(corpo)} bytes) e não traz redirect. "
+            f"O formulário do SICOM provavelmente mudou — confira "
+            f"{_FORM_URL} antes de confiar na coleta."
         )
-        logger.warning(
-            "CJF: redirect não encontrado na resposta; tentando URL padrão: %s",
-            caminho_relativo,
-        )
-    else:
-        caminho_relativo = m.group(1)
 
-    url_arquivo = f"{_BASE_URL}/{caminho_relativo}"
-    logger.info("CJF: baixando arquivo de %s", url_arquivo)
-
+    url_arquivo = f"{_BASE_URL}/{m.group(1)}"
+    logger.info("CJF: seguindo redirect para %s", url_arquivo)
     req2 = urllib.request.Request(
         url_arquivo, headers={"User-Agent": "calculadora-claims/1.0"}
     )
     with urllib.request.urlopen(req2, timeout=config.TIMEOUT_SEGUNDOS) as resp2:
-        return resp2.read()
+        conteudo = resp2.read()
+
+    if not _parece_tabela(conteudo):
+        raise ValueError(
+            f"CJF {tipo_tabela}_{seq_encadeamento} ({mes:02d}/{ano}): o arquivo "
+            f"em {url_arquivo} não é uma tabela do SICOM ({len(conteudo)} bytes)."
+        )
+    return conteudo
+
+
+# Linha volátil que o SICOM injeta no arquivo com um token novo a cada
+# requisição, do tipo:
+#     link.download = "2026_08_tabela_de_correcao_monetaria_6a98840f72921";
+# Duas chamadas idênticas devolvem 48.436 bytes iguais em tudo, menos nisso.
+_RE_TOKEN_VOLATIL = re.compile(
+    rb"""link\.download\s*=\s*["'][^"']*["']\s*;""", re.I
+)
+
+
+def _normalizar_para_hash(conteudo: bytes) -> bytes:
+    """
+    Remove do conteúdo o que muda a cada download sem que a publicação tenha
+    mudado. Sem isso o SHA-256 nunca se repete, o hash deixa de detectar
+    "sem mudança" e cada execução arquiva outra cópia do mesmo arquivo.
+
+    Normaliza pouco e de forma explícita: só a linha do token. Se o SICOM
+    passar a variar outra coisa, o hash volta a mudar sempre — que é o lado
+    seguro do erro (rearquiva à toa, mas nunca deixa passar uma mudança real).
+    """
+    return _RE_TOKEN_VOLATIL.sub(b"", conteudo)
 
 
 def _calcular_sha256(conteudo: bytes) -> str:
-    return hashlib.sha256(conteudo).hexdigest()
+    """SHA-256 do conteúdo normalizado — ver _normalizar_para_hash."""
+    return hashlib.sha256(_normalizar_para_hash(conteudo)).hexdigest()
 
 
 def _salvar_arquivo(
@@ -151,51 +223,100 @@ def _salvar_arquivo(
 _RE_ANO_CELULA = re.compile(r"^\s*(\d{4})\s*$")
 _RE_NUM_BR = re.compile(r"\d{1,3}(?:\.\d{3})*,\d+")
 
+# Cabeçalho que abre o componente de Selic: "SELIC de 1/2022 a 9/2025".
+_RE_CABECALHO_SELIC = re.compile(r"^\s*SELIC\b", re.I)
+# Fim da área de dados.
+_RE_FIM_DADOS = re.compile(r"^\s*Observa", re.I)
+
 
 def _br_para_float(s: str) -> float:
     """'1.045,540000' → 1045.54  |  '0,0075589248' → 0.0075589248"""
     return float(s.replace(".", "").replace(",", "."))
 
 
-def _extrair_texto_celulas(html: str) -> list[str]:
-    """Extrai texto limpo de todas as células <td>...</td>."""
-    linhas_texto = []
+def _extrair_texto_celulas(html: str) -> list[list[str]]:
+    """
+    Extrai o texto limpo das células <td> de cada linha, PRESERVANDO A POSIÇÃO.
+
+    As células vazias são mantidas na lista (como ""), e isso é essencial: nas
+    linhas de dados o mês é a POSIÇÃO da coluna (1 = janeiro ... 12 = dezembro),
+    e anos parciais têm colunas vazias. A tabela do CJF começa em out/1964, ou
+    seja, a linha de 1964 é ['1964', '', ..., '', v, v, v] — descartar os vazios
+    antes de atribuir a posição fazia out/nov/dez de 1964 serem gravados como
+    jan/fev/mar. É a mesma armadilha de alinhamento por coluna que já tínhamos
+    encontrado nos PDFs de juros de mora.
+
+    Devolve apenas as linhas que tenham ao menos uma célula com conteúdo.
+    """
+    linhas_texto: list[list[str]] = []
     for row_m in re.finditer(r"<tr[^>]*>(.*?)</tr>", html, re.DOTALL):
         row_html = row_m.group(1)
         celulas = re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL)
         celulas_txt = [re.sub(r"<[^>]+>", "", c).strip() for c in celulas]
-        celulas_txt = [c for c in celulas_txt if c]
-        if celulas_txt:
+        if any(celulas_txt):
             linhas_texto.append(celulas_txt)
     return linhas_texto
 
 
-def parsear_xls(caminho: Path) -> list[tuple[int, int, float]]:
+def parsear_xls(caminho: Path) -> TabelaCJF:
     """
-    Lê o XLS (HTML) do CJF e devolve lista de (ano, mes, valor).
+    Lê o XLS (HTML) do CJF e devolve os DOIS componentes separados.
 
-    Ignora seções de cabeçalho, notas de rodapé e células vazias.
-    Trata múltiplas seções dentro do mesmo arquivo (ex.: VHI com ORTN, OTN...).
+    As tabelas de correção monetária da JF trazem, no mesmo arquivo e com a
+    mesma forma (ano nas linhas, meses nas colunas), dois componentes de
+    natureza incompatível:
+
+      `fatores`  fator de correção monetária COMPOSTO   (ex.: 1,0466221456)
+      `selic`    percentual de Selic acumulada LINEAR   (ex.: 43,89%)
+
+    O componente de Selic aparece nas categorias com janela de Selic (EC 113
+    ou art. 406 do CC) e é aberto por um cabeçalho "SELIC de m/aaaa a m/aaaa".
+    Dentro da janela, os fatores do primeiro componente ficam CONGELADOS num
+    platô — a correção daquele período está na Selic, não neles.
+
+    Separá-los aqui é o que garante que um percentual nunca chegue ao banco de
+    fatores: os dois se sobrepõem no mesmo (ano, mês), e juntos o 43,89 seria
+    lido como coeficiente.
+
+    Ignora cabeçalhos, notas de rodapé e células vazias. Dentro de cada
+    componente vale a primeira ocorrência de cada ano — é o que trata as
+    múltiplas seções do VHI (ORTN, OTN, BTN...), sem cabeçalho identificável.
     """
     conteudo = caminho.read_bytes().decode("latin-1", errors="replace")
     linhas = _extrair_texto_celulas(conteudo)
 
     fatores: list[tuple[int, int, float]] = []
+    selic: list[tuple[int, int, float]] = []
+    destino = fatores
+    vistos: set[tuple[int, int]] = set()   # (id do destino, ano)
     anos_vistos: set[int] = set()
 
     for celulas in linhas:
         if not celulas:
             continue
 
+        primeira = celulas[0]
+
+        # Fim da área de dados: começam as observações/rodapé.
+        if _RE_FIM_DADOS.match(primeira):
+            break
+
+        # Cabeçalho que abre o componente de Selic.
+        if _RE_CABECALHO_SELIC.match(primeira):
+            destino = selic
+            logger.debug("CJF: início do componente de Selic (%s).", primeira[:40])
+            continue
+
         # Linha de dados: primeira célula é exatamente um ano de 4 dígitos
-        m = _RE_ANO_CELULA.match(celulas[0])
+        m = _RE_ANO_CELULA.match(primeira)
         if not m:
             continue
         ano = int(m.group(1))
         if not (1900 <= ano <= 2200):
             continue
-        if ano in anos_vistos:
+        if (id(destino), ano) in vistos:
             continue
+        vistos.add((id(destino), ano))
         anos_vistos.add(ano)
 
         # Células 1..12: valores mensais (jan..dez)
@@ -213,16 +334,22 @@ def parsear_xls(caminho: Path) -> list[tuple[int, int, float]]:
 
         for mes_idx, valor in enumerate(valores, start=1):
             if valor is not None:
-                fatores.append((ano, mes_idx, valor))
+                destino.append((ano, mes_idx, valor))
 
-    fatores.sort(key=lambda x: (x[0], x[1]))
+    fatores.sort()
+    selic.sort()
     logger.info(
-        "CJF: %d fatores extraídos (anos %s..%s).",
-        len(fatores),
+        "CJF: %s — %d fatores de correção e %d valores de Selic (anos %s..%s).",
+        caminho.name, len(fatores), len(selic),
         min(anos_vistos) if anos_vistos else "-",
         max(anos_vistos) if anos_vistos else "-",
     )
-    return fatores
+    if not fatores:
+        raise ValueError(
+            f"CJF: nenhum fator de correção extraído de {caminho.name}. "
+            f"O layout da tabela provavelmente mudou."
+        )
+    return TabelaCJF(fatores=fatores, selic=selic)
 
 
 # ------------------------------------------------------------------ #
@@ -257,14 +384,15 @@ def coletar_tabela(
             sha256=sha256_atual,
             caminho_arquivo=Path(""),
             fatores=[],
+            selic=[],
             mudou=False,
         )
 
     caminho = _salvar_arquivo(conteudo, tabela_chave, sha256_atual)
-    fatores = parsear_xls(caminho)
+    tabela = parsear_xls(caminho)
     logger.info(
-        "CJF %s: nova versão (%s), %d fatores.",
-        tabela_chave, sha256_atual[:8], len(fatores),
+        "CJF %s: nova versão (%s), %d fatores de correção e %d valores de Selic.",
+        tabela_chave, sha256_atual[:8], len(tabela.fatores), len(tabela.selic),
     )
     return ResultadoCJF(
         tabela_chave=tabela_chave,
@@ -274,6 +402,7 @@ def coletar_tabela(
         ano_referencia=ano_referencia,
         sha256=sha256_atual,
         caminho_arquivo=caminho,
-        fatores=fatores,
+        fatores=tabela.fatores,
+        selic=tabela.selic,
         mudou=True,
     )

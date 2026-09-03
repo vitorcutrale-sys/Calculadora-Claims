@@ -229,6 +229,7 @@ def coletar_cjf(mes: int = 0, ano: int = 0) -> dict:
         "tabelas_novas_versoes": 0,
         "tabelas_inalteradas": 0,
         "fatores_atualizados": 0,
+        "selic_atualizados": 0,
         "tabelas_com_erro": 0,
         "erros": [],
     }
@@ -265,18 +266,26 @@ def coletar_cjf(mes: int = 0, ano: int = 0) -> dict:
                     sha256=resultado.sha256,
                     caminho_arquivo=str(resultado.caminho_arquivo),
                 )
-                afetadas = db.upsert_fatores_cjf(
+                # Os dois componentes da tabela vão para bancos distintos:
+                # correção composta em cjf_fatores, Selic linear em cjf_selic.
+                # Substituição (não upsert): as duas tabelas espelham a
+                # publicação mais recente, e linhas que deixaram de existir
+                # nela têm de sair. Ver db.substituir_valores_cjf.
+                afetadas, afetadas_selic = db.substituir_valores_cjf(
                     conn,
                     tabela_chave=chave,
                     publicacao_id=pub_id,
                     fatores=resultado.fatores,
+                    selic=resultado.selic,
                 )
 
             estatisticas["tabelas_novas_versoes"] += 1
             estatisticas["fatores_atualizados"] += afetadas
+            estatisticas["selic_atualizados"] += afetadas_selic
             logger.info(
-                "CJF %s: %d fatores atualizados (publicação %d).",
-                chave, afetadas, pub_id,
+                "CJF %s: %d fatores de correção e %d valores de Selic "
+                "atualizados (publicação %d).",
+                chave, afetadas, afetadas_selic, pub_id,
             )
 
         except Exception as e:
