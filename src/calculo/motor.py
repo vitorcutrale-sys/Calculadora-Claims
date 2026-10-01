@@ -140,12 +140,36 @@ class ResultadoVF:
     principal: Decimal
     juros: Decimal
     selic: Decimal
-    data_final: date
+    data_final: date          # último mês de índice aplicado (ou data do cálculo)
     trace: list = field(default_factory=list)
+    # True quando o saldo foi corrigido por ÍNDICES MENSAIS (regimes judiciais);
+    # False quando veio de accrual diário (poupança de precatório depositado).
+    por_indice_mensal: bool = True
 
     @property
     def saldo(self) -> Decimal:
         return self.principal + self.juros + self.selic
+
+    @property
+    def mes_posicao(self) -> date:
+        """
+        Mês a que o valor se refere — o rótulo correto do resultado.
+
+        Em cálculo judicial de precatório expedido NÃO há pro rata die: o valor
+        é o mesmo em qualquer dia do mês. Para exprimir o valor de um mês M,
+        aplicam-se os índices fechados até M-1. Logo a posição é o mês seguinte
+        ao último índice aplicado, e não o mês do próprio índice.
+
+        Exemplo: índices fechados até setembro/2026 -> valor de OUTUBRO/2026,
+        válido de 1º a 31 de outubro.
+
+        Na poupança de precatório já depositado a lógica é outra — ali o accrual
+        é diário (pro-rata em dias úteis, base 252) e a posição é a própria data
+        do cálculo.
+        """
+        if not self.por_indice_mensal:
+            return self.data_final
+        return _add_mes(_mes(self.data_final))
 
 
 # ------------------------------------------------------------------ #
@@ -399,8 +423,11 @@ def _calcular_deposito_judicial(
         "detalhe": res_poup.trace,
     }]
 
+    # Poupança é accrual diário (pro-rata em dias úteis): a posição é a própria
+    # data do cálculo, não o mês seguinte.
     return ResultadoVF(
-        res_poup.valor_final, Decimal("0"), Decimal("0"), data_calculo, trace
+        res_poup.valor_final, Decimal("0"), Decimal("0"), data_calculo, trace,
+        por_indice_mensal=False,
     )
 
 
@@ -459,7 +486,9 @@ def _aplicar_deposito(
         "detalhe": res_poup.trace,
     })
 
-    return ResultadoVF(principal, juros, selic, data_calculo, trace)
+    # Idem: o trecho final é poupança, com accrual diário até a data do cálculo.
+    return ResultadoVF(principal, juros, selic, data_calculo, trace,
+                       por_indice_mensal=False)
 
 
 # ------------------------------------------------------------------ #

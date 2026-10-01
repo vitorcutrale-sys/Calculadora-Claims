@@ -486,6 +486,14 @@ A **expedição do precatório** é o que define a composição. Antes dela o cr
 
 Como a janela de graça separa os dois casos no grid mensal, cada segmento de R3 fica inteiramente de um lado ou do outro. O `trace` registra a `posicao` (`pre_expedicao` / `pos_graca`), a `correcao` e o `juros_modo` aplicados.
 
+#### Sem pro rata die: o mês a que o valor se refere
+
+Em cálculo judicial de **precatório expedido não existe pro rata die**. O valor é o mesmo em qualquer dia do mês, e para exprimir o valor de um mês M aplicam-se os índices fechados até **M−1**. Índices fechados até setembro/2026 produzem, portanto, o valor de **outubro/2026**, válido de 1º a 31 de outubro.
+
+Por isso `ResultadoVF.data_final` (o último índice aplicado) **não é** o rótulo do resultado: quem rotula é `ResultadoVF.mes_posicao`, que devolve o mês seguinte. Use sempre essa propriedade ao apresentar um valor, em vez de escrever o mês à mão.
+
+A exceção é o **depósito judicial**, onde o pro rata die é obrigatório: a poupança rende por accrual diário (dias úteis, base 252) e a posição é a própria data do cálculo. O motor distingue os dois casos por `ResultadoVF.por_indice_mensal`.
+
 A **data final padrão** segue as séries do regime que fecha o cálculo, e não uma série fixa: um crédito que termina em R3 pré-expedição é limitado pelo IPCA-15 e pela Taxa Legal, que costumam estar publicadas à frente do IPCA. Em todos os casos só entram meses **fechados** — o mês corrente é excluído porque há séries que o publicam incompleto (a Taxa Legal trazia outubro/2026 com 0,37902% já no dia 1º, contra 1,499119% de setembro inteiro).
 
 Nos dois casos os juros correm **somente dentro do próprio segmento**. É isso que impede o período de graça — que não gera juros — de entrar na contagem, e que impede os dois R3 de se sobreporem quando ambos existem (precatório de LOA ≥ 2027 mantido além do exercício). No caso simples, sem R3 pré-expedição, o segmento já começa em ago/2025 e os 2% correm de 01/08/2025, como sempre.
