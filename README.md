@@ -486,6 +486,8 @@ A **expedição do precatório** é o que define a composição. Antes dela o cr
 
 Como a janela de graça separa os dois casos no grid mensal, cada segmento de R3 fica inteiramente de um lado ou do outro. O `trace` registra a `posicao` (`pre_expedicao` / `pos_graca`), a `correcao` e o `juros_modo` aplicados.
 
+A **data final padrão** segue as séries do regime que fecha o cálculo, e não uma série fixa: um crédito que termina em R3 pré-expedição é limitado pelo IPCA-15 e pela Taxa Legal, que costumam estar publicadas à frente do IPCA. Em todos os casos só entram meses **fechados** — o mês corrente é excluído porque há séries que o publicam incompleto (a Taxa Legal trazia outubro/2026 com 0,37902% já no dia 1º, contra 1,499119% de setembro inteiro).
+
 Nos dois casos os juros correm **somente dentro do próprio segmento**. É isso que impede o período de graça — que não gera juros — de entrar na contagem, e que impede os dois R3 de se sobreporem quando ambos existem (precatório de LOA ≥ 2027 mantido além do exercício). No caso simples, sem R3 pré-expedição, o segmento já começa em ago/2025 e os 2% correm de 01/08/2025, como sempre.
 
 > **Nota sobre a série 7478.** É o **IPCA-15** (variação mensal, coleta encerrada no dia 15) — na praxe forense costuma ser chamada de "IPCA-E", ainda que o IPCA-E em sentido estrito seja o acumulado trimestral do IPCA-15. Conferido contra os valores oficiais: jan/2025 = 0,11% (IPCA-15) vs 0,16% (IPCA).

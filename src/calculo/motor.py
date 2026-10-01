@@ -85,15 +85,46 @@ def _add_mes(d: date, n: int = 1) -> date:
     return date(total // 12, total % 12 + 1, 1)
 
 
-def _ate_padrao(conn: sqlite3.Connection, codigo_serie: int) -> date:
+def _ultimo_mes_fechado(conn: sqlite3.Connection, codigo_serie: int) -> date:
     """
-    Data final padrão do cálculo = mês corrente (hoje), limitado ao último mês
-    já publicado da série. Assim o ativo é sempre atualizado "até a data atual",
-    sem tentar corrigir meses cujo índice ainda não saiu.
+    Último mês da série que já está FECHADO — isto é, publicado e anterior ao
+    mês corrente.
+
+    O corte pelo mês corrente não é zelo excessivo: há séries que publicam o
+    mês em curso ainda incompleto. A Taxa Legal (29543) é o caso claro — em
+    01/10/2026 ela já trazia outubro com 0,37902%, contra 1,499119% de
+    setembro inteiro. Somar esse valor seria contar um mês pela metade.
     """
     hoje = _mes(date.today())
-    ultimo = indices.ultimo_mes_serie(conn, codigo_serie)
-    return min(hoje, ultimo)
+    return min(indices.ultimo_mes_serie(conn, codigo_serie), _add_mes(hoje, -1))
+
+
+def _ate_padrao(conn: sqlite3.Connection, *codigos_serie: int) -> date:
+    """
+    Data final padrão do cálculo: o último mês fechado em TODAS as séries
+    informadas. Assim o ativo é sempre atualizado até onde os dados permitem,
+    sem tentar corrigir meses cujo índice ainda não saiu nem meses incompletos.
+
+    Recebe mais de uma série porque um regime pode depender de duas: o R3
+    pré-expedição, por exemplo, usa o IPCA-15 na correção e a Taxa Legal nos
+    juros, e só pode avançar até onde as duas tiverem fechado.
+    """
+    return min(_ultimo_mes_fechado(conn, c) for c in codigos_serie)
+
+
+def _series_do_fim(pre_expedicao: bool) -> tuple[int, ...]:
+    """
+    Séries que limitam a data final, conforme o regime que fecha o cálculo.
+
+    Usar sempre o IPCA (433) seria errado: ele é a série do R3 PÓS-GRAÇA. Um
+    crédito que ainda não teve o precatório expedido fecha em R3
+    PRÉ-EXPEDIÇÃO, que corrige pelo IPCA-15 e aplica a Taxa Legal — e essas
+    duas costumam estar publicadas à frente do IPCA, de modo que ancorar no
+    433 interrompia o cálculo antes do que os dados permitiam.
+    """
+    if pre_expedicao:
+        return (SERIE_IPCA15, SERIE_TAXA_LEGAL)
+    return (SERIE_IPCA,)
 
 
 # Marcos legais no grid mensal
@@ -213,7 +244,14 @@ def calcular_vf_bruto(
     inicio_graca = _add_mes(_mes(expedicao))
 
     if ate is None:
-        ate = _ate_padrao(conn, SERIE_IPCA)   # hoje, limitado ao último IPCA
+        # A data final depende de QUAL regime fecha o cálculo, porque cada um
+        # lê séries diferentes. Se mesmo esticando até o limite das séries do
+        # R3 pré-expedição o cálculo ainda termina antes da graça, então é esse
+        # o regime final e são essas as séries que mandam; caso contrário o
+        # fecho é pós-graça (ou dentro da graça) e quem manda é o IPCA.
+        candidato = _ate_padrao(conn, *_series_do_fim(pre_expedicao=True))
+        pre = candidato < inicio_graca
+        ate = candidato if pre else _ate_padrao(conn, *_series_do_fim(False))
     fim_mes = _mes(ate)
 
     principal = premissas.valor_principal
