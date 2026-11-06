@@ -17,6 +17,9 @@ data/
 *.sqlite
 *.sqlite3
 
+# Calculadora em arquivo único (embute o banco; regenerável por gerar_html.py)
+dist/
+
 # ------------------------------------------------------------------ #
 # Logs de execução                                                   #
 # ------------------------------------------------------------------ #
