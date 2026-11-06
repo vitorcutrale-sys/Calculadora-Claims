@@ -232,6 +232,139 @@ def _segmentos(inicio: date, fim: date, inicio_graca: date, loa_mes: date):
 
 
 # ------------------------------------------------------------------ #
+# Juros de mora                                                       #
+# ------------------------------------------------------------------ #
+# Rótulo de cada regime na memória dos juros anteriores à data base.
+ROTULO_MORA = {
+    "GRACA": "Período de graça (sem juros)",
+    "R1": "Juros de mora pré-EC 113",
+    "R2": "EC 113 (Selic já compensa a mora)",
+    "R3": "Juros EC 136",
+}
+
+
+def _inicio_mora(premissas: PremissasAtivo) -> date:
+    """Mês a partir do qual correm os juros de mora (default: a data base)."""
+    return _mes(premissas.data_base_juros or premissas.data_base)
+
+
+def _r3_pre_expedicao(
+    premissas: PremissasAtivo, fim: date, inicio_graca: date
+) -> bool:
+    """
+    Qual das duas composições do R3 vale neste segmento.
+
+    O padrão é POSICIONAL: o segmento que termina antes do início da graça é
+    pré-expedição (IPCA-E/IPCA-15 + Taxa Legal); o que vem depois é pós-graça
+    (IPCA + 2% a.a.). `premissas.r3_regime` permite forçar uma das duas quando
+    a conta de referência adota composição diferente da que a posição indicaria
+    — é desvio deliberado, e fica registrado no trace.
+    """
+    if premissas.r3_regime == "ipca_2pct":
+        return False
+    if premissas.r3_regime == "ipca15_taxa_legal":
+        return True
+    return fim < inicio_graca
+
+
+def _fracao_mora(
+    conn: sqlite3.Connection,
+    regime: str,
+    ini: date,
+    fim: date,
+    tabela_juros: str,
+    inicio_graca: date,
+    r3_pre: Optional[bool] = None,
+) -> tuple[Decimal, dict]:
+    """
+    Fração de juros de mora (simples) dos meses [ini..fim], todos de um mesmo
+    regime, e o detalhe para o trace.
+
+      GRACA | sem juros
+      R1    | tabela de juros de mora do perfil (acumulada até dez/2021)
+      R2    | sem juros separados: a Selic da EC 113 é índice único e já
+            | compensa a mora
+      R3    | pré-expedição: soma linear da Taxa Legal
+            | pós-graça    : 2% a.a. pro-rata, dias corridos base 360
+    """
+    if regime == "R1":
+        fr = indices.fracao_juros_mora(conn, tabela_juros, ini, _add_mes(fim))
+        return fr, {"juros_mora_frac": fr}
+    if regime == "R3":
+        pre = (fim < inicio_graca) if r3_pre is None else r3_pre
+        if pre:
+            fr = indices.soma_linear_serie(conn, SERIE_TAXA_LEGAL, ini, fim)
+            return fr, {"juros_modo": "taxa_legal", "juros_frac": fr}
+        dias = indices.dias_360(ini, indices.fim_do_mes(fim))
+        fr = JUROS_EC136_AA * Decimal(dias) / Decimal("360")
+        return fr, {"juros_modo": "2pct_prorata", "dias_360": dias, "juros_frac": fr}
+    return Decimal("0"), {}
+
+
+def _mora_no_segmento(
+    conn: sqlite3.Connection,
+    premissas: PremissasAtivo,
+    regime: str,
+    ini: date,
+    fim: date,
+    tabela_juros: str,
+    inicio_graca: date,
+) -> tuple[Decimal, dict]:
+    """
+    Fração de juros de mora de um segmento do motor, respeitando as opções do
+    usuário: a não incidência e a data base própria dos juros. Quando esta é
+    posterior ao início do segmento, só os meses a partir dela contam.
+    """
+    if not premissas.aplicar_juros_mora:
+        return Decimal("0"), {"mora": "nao_aplicados"}
+    de = max(ini, _inicio_mora(premissas))
+    if de > fim:
+        return Decimal("0"), {"mora": "antes_da_data_base_juros"}
+    fr, detalhe = _fracao_mora(
+        conn, regime, de, fim, tabela_juros, inicio_graca,
+        r3_pre=_r3_pre_expedicao(premissas, fim, inicio_graca),
+    )
+    if de != ini:
+        detalhe["mora_desde"] = f"{de:%Y-%m}"
+    return fr, detalhe
+
+
+def _mora_anterior(
+    conn: sqlite3.Connection,
+    premissas: PremissasAtivo,
+    inicio: date,
+    tabela_juros: str,
+    inicio_graca: date,
+    loa_mes: date,
+) -> tuple[Decimal, list]:
+    """
+    Juros de mora dos meses ANTERIORES à data base, quando a data base dos
+    juros é anterior a ela: [inicio_mora .. mês anterior à data base].
+
+    Cada mês é apurado pelo regime em que cai (ver `_fracao_mora`). A fração
+    incide sobre o principal informado na data base e o valor entra no
+    componente de juros ANTES do primeiro regime — dali em diante é corrigido
+    junto com o resto do saldo. Como os juros do R1 e do R3 incidem sobre o
+    principal já corrigido, isso equivale a estender a contagem desses juros
+    para trás.
+    """
+    total = Decimal("0")
+    partes = []
+    fim = _add_mes(inicio, -1)
+    for regime, ini, ate in _segmentos(_inicio_mora(premissas), fim, inicio_graca, loa_mes):
+        fr, _ = _fracao_mora(
+            conn, regime, ini, ate, tabela_juros, inicio_graca,
+            r3_pre=_r3_pre_expedicao(premissas, ate, inicio_graca),
+        )
+        total += fr
+        partes.append({
+            "etapa": ROTULO_MORA.get(regime, regime),
+            "de": ini, "ate": indices.fim_do_mes(ate), "taxa": fr,
+        })
+    return total, partes
+
+
+# ------------------------------------------------------------------ #
 # Motor                                                               #
 # ------------------------------------------------------------------ #
 def calcular_vf_bruto(
@@ -285,6 +418,24 @@ def calcular_vf_bruto(
     inicio = _mes(premissas.data_base)  # correções a partir do mês da data base (inclusive)
     res = ResultadoVF(principal, juros, selic, ate)
 
+    # Data base dos juros ANTERIOR à data base: os juros de mora do intervalo
+    # entram no componente de juros antes do primeiro regime.
+    if premissas.aplicar_juros_mora and _inicio_mora(premissas) < inicio:
+        fr_ant, partes = _mora_anterior(
+            conn, premissas, inicio, tabela_juros, inicio_graca, loa_mes
+        )
+        j_ant = principal * fr_ant
+        juros += j_ant
+        res.trace.append({
+            "regime": "MORA_ANTERIOR",
+            "de": f"{_inicio_mora(premissas):%Y-%m}",
+            "ate": f"{_add_mes(inicio, -1):%Y-%m}",
+            "juros_frac": fr_ant,
+            "juros_mora": j_ant,
+            "saldo": principal + juros + selic,
+            "detalhe": partes,
+        })
+
     for regime, ini, fim in _segmentos(inicio, fim_mes, inicio_graca, loa_mes):
         if regime == "GRACA":
             f = indices.fator_ipca_composto(conn, SERIE_IPCA15, ini, fim)
@@ -298,11 +449,13 @@ def calcular_vf_bruto(
             coef_ini = indices.fator_correcao_sicom(conn, tabela_sicom, ini)
             coef_fim = indices.fator_correcao_sicom(conn, tabela_sicom, _add_mes(fim))
             f = coef_ini / coef_fim
-            fr_mora = indices.fracao_juros_mora(conn, tabela_juros, ini, _add_mes(fim))
+            fr_mora, det_mora = _mora_no_segmento(
+                conn, premissas, regime, ini, fim, tabela_juros, inicio_graca
+            )
             principal *= f; juros *= f; selic *= f
             jmora = principal * fr_mora
             juros += jmora
-            detalhe = {"fator": f, "juros_mora_frac": fr_mora, "juros_mora": jmora}
+            detalhe = {"fator": f, **det_mora, "juros_mora": jmora}
 
             # Juros COMPENSATÓRIOS (desapropriação): simples, sobre o principal
             # corrigido, dentro do R1. São OPT-IN — ver
@@ -345,31 +498,29 @@ def calcular_vf_bruto(
             # casos os juros correm SOMENTE dentro do próprio segmento: é isso
             # que impede o período de graça (que não gera juros) de ser contado,
             # e impede que os dois R3 se sobreponham quando ambos existem.
-            pre_expedicao = fim < inicio_graca
+            # `r3_regime` pode forçar uma das composições; o padrão é posicional.
+            pre_expedicao = _r3_pre_expedicao(premissas, fim, inicio_graca)
 
             if pre_expedicao:
                 f = indices.fator_ipca_composto(conn, SERIE_IPCA15, ini, fim)
-                principal *= f; juros *= f; selic *= f
-                fr_j = indices.soma_linear_serie(conn, SERIE_TAXA_LEGAL, ini, fim)
-                detalhe = {
-                    "fator": f, "correcao": "ipca15",
-                    "juros_modo": "taxa_legal", "posicao": "pre_expedicao",
-                    "juros_frac": fr_j,
-                }
+                detalhe = {"fator": f, "correcao": "ipca15", "posicao": "pre_expedicao"}
             else:
+                # Juros: 2% a.a. pro-rata em dias corridos base 360, do início
+                # DESTE segmento (ou da data base dos juros, se posterior) até
+                # o fim do mês final. No caso simples (sem R3 pré-expedição) o
+                # segmento já começa em ago/2025, o 1º mês da EC 136.
                 f = indices.fator_ipca_composto(conn, SERIE_IPCA, ini, fim)
-                principal *= f; juros *= f; selic *= f
-                # 2% a.a. pro-rata em dias corridos base 360, do início DESTE
-                # segmento até o fim do mês final. No caso simples (sem R3
-                # pré-expedição) o segmento já começa em ago/2025, o primeiro
-                # mês do regime da EC 136.
-                dias = indices.dias_360(ini, indices.fim_do_mes(fim))
-                fr_j = JUROS_EC136_AA * Decimal(dias) / Decimal("360")
-                detalhe = {
-                    "fator": f, "correcao": "ipca",
-                    "juros_modo": "2pct_prorata", "posicao": "pos_graca",
-                    "dias_360": dias, "juros_frac": fr_j,
-                }
+                detalhe = {"fator": f, "correcao": "ipca", "posicao": "pos_graca"}
+            if premissas.r3_regime != "automatico":
+                # Deixa explícito no laudo que a composição foi imposta, e não
+                # deduzida da posição do segmento na linha do tempo.
+                detalhe["r3_regime"] = premissas.r3_regime
+                detalhe["posicao"] += " (forçado)"
+            principal *= f; juros *= f; selic *= f
+            fr_j, det_mora = _mora_no_segmento(
+                conn, premissas, regime, ini, fim, tabela_juros, inicio_graca
+            )
+            detalhe.update(det_mora)
             # Os juros do R3 incidem APENAS sobre o principal corrigido.
             j_r3 = principal * fr_j
             detalhe["juros_r3"] = j_r3
@@ -510,6 +661,10 @@ def _calcular_tributario(
 
     O componente `selic` do resultado guarda o acréscimo da Selic sobre o
     principal (transparência); `principal` fica na sua base (corrigida a 1996).
+
+    Juros de mora: só existem no trecho pré-1996 (a Selic é índice único). A
+    não incidência os zera; a data base dos juros desloca o início da contagem
+    — para trás ou para frente — sem mexer na correção nem na Selic.
     """
     tabela_correcao = perfil["r1_correcao"]  # TCM_4
     tabela_juros = perfil["r1_juros"]        # JUROS_TRIBUTARIO
@@ -521,6 +676,8 @@ def _calcular_tributario(
     principal = premissas.valor_principal
     juros = premissas.valor_juros
     data_base = _mes(premissas.data_base)
+    inicio_mora = _inicio_mora(premissas)
+    tem_mora = premissas.aplicar_juros_mora and inicio_mora < PIVO_TRIBUTARIO
     trace = []
 
     # --- Segmento 1: correção até 01/1996 (só se a data base for anterior) ---
@@ -528,17 +685,35 @@ def _calcular_tributario(
         coef_ini = indices.fator_correcao_sicom(conn, tabela_correcao, data_base)
         coef_piv = indices.fator_correcao_sicom(conn, tabela_correcao, PIVO_TRIBUTARIO)
         f = coef_ini / coef_piv
-        fr_mora = indices.fracao_juros_mora(conn, tabela_juros, data_base, PIVO_TRIBUTARIO)
         principal *= f
         juros *= f
+        fr_mora = Decimal("0")
+        if tem_mora:
+            fr_mora = indices.fracao_juros_mora(conn, tabela_juros, inicio_mora, PIVO_TRIBUTARIO)
         jmora = principal * fr_mora
         juros += jmora
-        trace.append({
+        linha = {
             "regime": "CORRECAO<1996", "de": f"{data_base:%Y-%m}", "ate": "1996-01",
-            "fator": f, "juros_mora": jmora, "saldo": principal + juros,
-        })
+            "fator": f, "juros_mora_frac": fr_mora, "juros_mora": jmora,
+            "saldo": principal + juros,
+        }
+        if not premissas.aplicar_juros_mora:
+            linha["mora"] = "nao_aplicados"
+        elif inicio_mora != data_base:
+            linha["mora_desde"] = f"{inicio_mora:%Y-%m}"
+        trace.append(linha)
         selic_inicio = PIVO_TRIBUTARIO
     else:
+        # Data base já na era Selic, mas data base dos juros anterior a 1996:
+        # os juros pré-1996 desse intervalo incidem sobre o principal informado.
+        if tem_mora:
+            fr_mora = indices.fracao_juros_mora(conn, tabela_juros, inicio_mora, PIVO_TRIBUTARIO)
+            jmora = principal * fr_mora
+            juros += jmora
+            trace.append({
+                "regime": "MORA_ANTERIOR", "de": f"{inicio_mora:%Y-%m}", "ate": "1995-12",
+                "juros_frac": fr_mora, "juros_mora": jmora, "saldo": principal + juros,
+            })
         selic_inicio = data_base
 
     # --- Segmento 2: Selic linear só sobre o principal ---

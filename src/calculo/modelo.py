@@ -65,6 +65,14 @@ def fim_loa(ano_orcamento: int) -> date:
     return date(ano_orcamento, 12, 31)
 
 
+# Modos de base do IR-RRA (ver PremissasAtivo.ir_rra_base).
+IR_RRA_BASES = ("integral", "proporcional")
+
+
+# Composições possíveis do R3 (ver PremissasAtivo.r3_regime e motor).
+R3_REGIMES = {"automatico", "ipca_2pct", "ipca15_taxa_legal"}
+
+
 # ------------------------------------------------------------------ #
 # Premissas do ativo (inputs do bloco 1)                              #
 # ------------------------------------------------------------------ #
@@ -92,12 +100,41 @@ class PremissasAtivo:
                             a mesma lógica: incide sobre o principal corrigido.
                             Informe pss_percentual OU pss_valor, nunca os dois.
         meses_ir_rra      : nº de meses para o cálculo do IR-RRA
+        ir_rra_base       : base sobre a qual a tabela progressiva do IR-RRA é
+                            aplicada ("integral" ou "proporcional"):
+                              integral     -> o IR é apurado sobre o principal
+                                              do crédito INTEIRO (a faixa da
+                                              tabela é a do crédito todo) e o
+                                              fundo arca com a fração do seu
+                                              share nesse imposto
+                              proporcional -> o IR é apurado diretamente sobre
+                                              o principal proporcional ao share
+                            Como a tabela é progressiva, os dois modos dão
+                            resultados diferentes sempre que o share < 100%.
+                            O IRRF de alíquota fixa não tem essa opção: incide
+                            sempre sobre a base proporcional.
         aliquota_imposto  : alíquota do IRRF sobre o montante global (fração).
                             Só se aplica a perfis NÃO remuneratórios; quando
                             deixada em 0, usa-se a alíquota legal de 3%
                             (art. 27 da Lei 10.833/2003). Informe apenas para
                             sobrepor essa alíquota em casos específicos.
-        percentual_ativo  : percentual do ativo adquirido/considerado (fração)
+        percentual_ativo  : SHARE do fundo — percentual do precatório que o
+                            fundo detém (fração). Incide sobre o valor
+                            atualizado do crédito e define o VF Bruto:
+                                VF Bruto = valor atualizado × share
+                            Todos os descontos partem desse VF Bruto.
+        aplicar_juros_mora : incidir juros de mora? (default True). Desligado,
+                            o motor não acrescenta os juros de mora do R1, os
+                            juros do R3 (Taxa Legal ou 2% a.a.) nem os juros de
+                            mora pré-1996 do tributário. A Selic do R2 e a do
+                            tributário pós-1996 seguem aplicadas: é o índice
+                            único da EC 113 e não separa correção de mora.
+        data_base_juros   : data a partir da qual os juros de mora correm, se
+                            diferente da data base (opcional). Pode ser
+                            ANTERIOR à data base — os juros do intervalo são
+                            apurados pelo regime de cada mês e somados ao
+                            componente de juros — ou POSTERIOR, caso em que os
+                            meses entre a data base e ela não geram juros.
         honorarios_percentual : percentual de honorários sobre o crédito, como
                             fração (ex.: 0.20 para 20%). A BASE depende de
                             `destacamento_honorarios`.
@@ -133,6 +170,17 @@ class PremissasAtivo:
                             um precatório expedido cujos valores não vêm de
                             ofício requisitório pode precisar dos compensatórios,
                             e um não expedido cujo laudo já os inclui, não.
+        r3_regime         : qual composição usar no R3. Por padrão a escolha é
+                            POSICIONAL (ver motor): antes da expedição vale
+                            IPCA-E/IPCA-15 com juros da Taxa Legal; depois do
+                            período de graça, IPCA com juros de 2% a.a.
+                              "automatico"          -> regra posicional (padrão)
+                              "ipca_2pct"           -> força IPCA + 2% a.a.
+                              "ipca15_taxa_legal"   -> força IPCA-15 + Taxa Legal
+                            Os dois últimos existem para casos em que a conta de
+                            referência adota uma composição diferente da que a
+                            posição na linha do tempo indicaria. Use com o motivo
+                            registrado — é um desvio deliberado do padrão.
         transito_antes_adi2332 : o título transitou em julgado ANTES da ADI 2332?
                             Só relevante quando aplicar_juros_compensatorios=True:
                               True  -> compensatórios de 1% a.m. simples em todo o R1
@@ -158,13 +206,17 @@ class PremissasAtivo:
     pss_percentual: Decimal = Decimal("0")
     pss_valor: Decimal = Decimal("0")
     meses_ir_rra: int = 0
+    ir_rra_base: str = "integral"
     aliquota_imposto: Decimal = Decimal("0")
     percentual_ativo: Decimal = Decimal("1")
+    aplicar_juros_mora: bool = True
+    data_base_juros: Optional[date] = None
     honorarios_percentual: Decimal = Decimal("0")
     destacamento_honorarios: bool = True
     precatorio_expedido: bool = True
     aplicar_juros_compensatorios: bool = False
     transito_antes_adi2332: bool = False
+    r3_regime: str = "automatico"
     precatorio_depositado: bool = False
     data_deposito: Optional[date] = None
     perfil: str = "federal_servidores"
@@ -262,8 +314,18 @@ class PremissasAtivo:
                     f"pss_valor (R$ {self.pss_valor}) não pode ser maior que o "
                     f"principal (R$ {self.valor_principal})."
                 )
+        if self.r3_regime not in R3_REGIMES:
+            raise ValueError(
+                f"r3_regime inválido: {self.r3_regime!r}. "
+                f"Use um de {sorted(R3_REGIMES)}."
+            )
         if self.meses_ir_rra < 0:
             raise ValueError("meses_ir_rra não pode ser negativo.")
+        if self.ir_rra_base not in IR_RRA_BASES:
+            raise ValueError(
+                f"ir_rra_base deve ser {' ou '.join(IR_RRA_BASES)} "
+                f"(recebido: {self.ir_rra_base!r})."
+            )
         if not (Decimal("0") <= self.aliquota_imposto <= Decimal("1")):
             raise ValueError("aliquota_imposto deve estar entre 0 e 1 (fração).")
         if not (Decimal("0") <= self.percentual_ativo <= Decimal("1")):
@@ -276,13 +338,15 @@ class PremissasAtivo:
         from .perfis import obter_perfil
 
         perfil = obter_perfil(self.perfil)
-        if perfil.get("requer_loa", True):
-            if self.ano_orcamento < 1988:
-                raise ValueError(
-                    f"ano_orcamento ({self.ano_orcamento}) inválido para o perfil "
-                    f"'{self.perfil}', que depende do orçamento (LOA)."
-                )
-        elif self.data_deposito is None:
+        if perfil.get("requer_loa", True) and self.ano_orcamento < 1988:
+            raise ValueError(
+                f"ano_orcamento ({self.ano_orcamento}) inválido para o perfil "
+                f"'{self.perfil}', que depende do orçamento (LOA)."
+            )
+        # Regra independente da LOA: o depósito judicial parte da data do
+        # depósito. Não estar atrelado à LOA (caso do tributário) não implica
+        # exigir depósito.
+        if perfil.get("motor") == "deposito_judicial" and self.data_deposito is None:
             raise ValueError(
                 f"O perfil '{self.perfil}' exige data_deposito."
             )

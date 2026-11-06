@@ -275,6 +275,8 @@ PERFIS = {
             "o principal; o componente de juros fica fixo. Corre até o depósito/hoje."
         ),
         "motor": "tributario",           # usa _calcular_tributario (escape do segmentador)
+        # Sem graça nem expedição: o ano orçamentário não entra no cálculo.
+        "requer_loa": False,
         "r1_correcao": "TCM_4",          # correção pré-1996 (referência 01/1996)
         "r1_juros": "JUROS_TRIBUTARIO",  # juros de mora pré-1996
     },
