@@ -19,10 +19,14 @@ O script Python baixa, persiste e mantém atualizado tudo em SQLite local, com a
 ```
 Calculadora-Claims/
 ├── coletar_indices.py           Entry point unificado (BACEN + TJSP + CJF)
-├── executar_coleta.bat          Wrapper diário invocado pelo Task Scheduler
-├── executar_coleta_cjf.bat      Wrapper mensal CJF invocado pelo Task Scheduler
-├── agendar_windows.bat          Registra a rotina diária no Task Scheduler
-├── agendar_cjf_mensal.bat       Registra a rotina mensal CJF no Task Scheduler
+├── servidor.py                  Servidor local da interface (http://127.0.0.1:8000)
+├── gerar_html.py                Gera a calculadora em arquivo único (dist/, roda direto no Chrome)
+├── web/
+│   └── calculadora.html         Interface da calculadora (identidade JiveMauá, autocontida)
+├── executar_rotina_diaria.bat   Rotina das 03:00: coleta tudo e gera a calculadora em arquivo único
+├── agendar_rotinas.ps1          Registra as rotinas (diária e semestral) no Task Scheduler
+├── executar_coleta.bat          Coleta manual (todas as fontes)
+├── executar_coleta_cjf.bat      Coleta manual só do CJF
 ├── README.md                    Este arquivo
 ├── src/
 │   ├── config.py                Caminhos, séries BACEN, tabelas TJSP, CJF e Juros
@@ -34,6 +38,8 @@ Calculadora-Claims/
 │   ├── feriados.py              Coleta + parser dos feriados bancários (ANBIMA, .xls)
 │   ├── db.py                    Camada SQLite (BACEN + TJSP + CJF + Juros)
 │   ├── coletor.py               Orquestrador (BACEN + TJSP + CJF + importação de Juros)
+│   ├── api.py                   Contrato JSON entre a interface e o motor
+│   ├── navegador.py             Ponte do contrato quando o motor roda no navegador (Pyodide)
 │   └── calculo/                 Motor de cálculo (Fase 5)
 │       ├── modelo.py            Premissas do ativo (inputs) + regras de datas da LOA
 │       ├── perfis.py            Receitas declarativas por tipo de ativo
@@ -233,45 +239,34 @@ python coletar_indices.py --so-feriados        # feriados bancários (ANBIMA)
 
 ## Agendar rotinas automáticas (Windows Task Scheduler)
 
-São duas rotinas independentes:
+Um único script registra tudo (não precisa de administrador):
 
-### Rotina diária — BACEN + TJSP
-
-1. Clique com o botão direito em `agendar_windows.bat`.
-2. Escolha **Executar como administrador**.
-3. Registra a tarefa `CalculadoraClaims_ColetaIndicesBACEN` para rodar todo dia às **13:00**.
-
-```cmd
-schtasks /Query  /TN "CalculadoraClaims_ColetaIndicesBACEN" /V /FO LIST
-schtasks /Run    /TN "CalculadoraClaims_ColetaIndicesBACEN"
-schtasks /Delete /TN "CalculadoraClaims_ColetaIndicesBACEN" /F
+```powershell
+powershell -ExecutionPolicy Bypass -File .\agendar_rotinas.ps1
 ```
 
-### Rotina mensal — CJF
+| Tarefa | Quando | O que faz |
+|--------|--------|-----------|
+| `CalculadoraClaims_RotinaDiaria` | todo dia, **03:00** | `executar_rotina_diaria.bat`: coleta BACEN, poupança, TJSP e CJF e **gera a calculadora em arquivo único** com o banco atualizado |
+| `CalculadoraClaims_ColetaIRPF_Semestral` | dias **15/jan e 15/jul, 03:30** | `executar_coleta_irpf.bat`: tabela do IRPF + feriados da ANBIMA |
 
-1. Clique com o botão direito em `agendar_cjf_mensal.bat`.
-2. Escolha **Executar como administrador**.
-3. Registra a tarefa `CalculadoraClaims_ColetaCJF_Mensal` para rodar no **dia 5 de cada mês às 08:00** (o CJF costuma publicar as tabelas do mês corrente nos primeiros dias do mês).
+O CJF entra na rotina diária: a coleta ignora tabelas já baixadas (hash), então rodar todo dia só custa a consulta. O script é idempotente e remove as tarefas antigas que substitui (`..._ColetaIndicesBACEN` e `..._ColetaCJF_Mensal`).
 
-```cmd
-schtasks /Query  /TN "CalculadoraClaims_ColetaCJF_Mensal" /V /FO LIST
-schtasks /Run    /TN "CalculadoraClaims_ColetaCJF_Mensal"
-schtasks /Delete /TN "CalculadoraClaims_ColetaCJF_Mensal" /F
-```
+**Destino da calculadora.** Edite `SAIDA` no topo de `executar_rotina_diaria.bat` com a pasta de destino (por exemplo, uma pasta do SharePoint sincronizada no OneDrive). Em branco, o arquivo vai para `dist/`. A calculadora é gerada mesmo que alguma fonte falhe na coleta — vale o que foi coletado, e o erro fica no log.
 
-### Rotina semestral — IRPF
+**Configuração pensada para notebook:**
+- **acorda o computador** para rodar — funciona com o notebook em suspensão e na tomada (os timers de ativação do Windows costumam vir desligados na bateria);
+- **se o horário foi perdido** (computador desligado), roda assim que ele for ligado;
+- roda também na bateria.
 
-1. Clique com o botão direito em `agendar_irpf_semestral.bat`.
-2. Escolha **Executar como administrador**.
-3. Registra a tarefa `CalculadoraClaims_ColetaIRPF_Semestral` para rodar nos dias **15 de janeiro e 15 de julho às 08:00** — janeiro captura a tabela do novo ano-calendário; julho captura eventuais mudanças no meio do ano. O mesmo wrapper também atualiza os **feriados bancários** da ANBIMA.
+A tarefa só roda com o usuário conectado: o modo "sem usuário conectado" exige administrador nesta máquina. Por isso o `.bat` se reabre **minimizado** — uma janela de console aberta na tela poderia ser fechada por engano e interromper a rotina no meio. O ideal de longo prazo é uma máquina sempre ligada (servidor/VM).
 
 ```cmd
-schtasks /Query  /TN "CalculadoraClaims_ColetaIRPF_Semestral" /V /FO LIST
-schtasks /Run    /TN "CalculadoraClaims_ColetaIRPF_Semestral"
-schtasks /Delete /TN "CalculadoraClaims_ColetaIRPF_Semestral" /F
+schtasks /Query /TN "CalculadoraClaims_RotinaDiaria" /V /FO LIST
+schtasks /Run   /TN "CalculadoraClaims_RotinaDiaria"
 ```
 
-Os logs ficam em `logs/agendador.log` (wrapper diário), `logs/agendador_cjf.log` (wrapper mensal), `logs/agendador_irpf.log` (wrapper semestral) e `logs/coleta_AAAA-MM-DD.log` (logs estruturados do Python).
+Os logs ficam em `logs/rotina_diaria.log` (rotina diária, com o resumo `Coleta: <código>  Calculadora: <código>` ao fim de cada execução), `logs/agendador_irpf.log` (semestral) e `logs/coleta_AAAA-MM-DD.log` (logs estruturados do Python). Como o `.bat` se reabre minimizado, o resultado mostrado pelo Agendador é sempre 0 — o resultado real é o do log.
 
 ## Estrutura do banco
 
@@ -563,9 +558,16 @@ O `trace` ganha um segmento `POUPANCA` com o número de aniversários, o fator t
 
 A série cobre de **04/05/2012** (início da "nova poupança") em diante; um depósito anterior a essa data levanta erro explícito em vez de calcular errado.
 
+### Juros de mora — não incidência e data base própria
+
+Por padrão os juros de mora incidem desde a data base. Dois inputs mudam isso:
+
+- `aplicar_juros_mora=False` — não acrescenta os juros de mora do R1, os juros do R3 (Taxa Legal ou 2% a.a.) nem os juros pré-1996 do tributário. A Selic do R2 e a do tributário pós-1996 seguem aplicadas: é índice único e não separa correção de mora.
+- `data_base_juros` — data a partir da qual os juros correm, se diferente da data base. **Posterior**: os meses entre a data base e ela não geram juros. **Anterior**: os juros do intervalo são apurados pelo regime de cada mês, incidem sobre o principal informado e entram no componente de juros antes do primeiro regime (segmento `MORA_ANTERIOR` no `trace`).
+
 ### Valor de Face Líquido
 
-`src/calculo/liquido.py` parte do VF Bruto e aplica os descontos:
+`src/calculo/liquido.py` parte do valor atualizado do crédito, aplica o share do fundo e os descontos:
 
 ```python
 from src.calculo import liquido
@@ -574,24 +576,29 @@ with db.conectar() as conn:
     bruto = motor.calcular_vf_bruto(conn, premissas)
     r = liquido.calcular_vf_liquido(conn, bruto, premissas)
 
-r.vf_bruto        # montante global (principal + juros + selic)
-r.impostos        # PSS + IR-RRA + IRRF
-r.vf_liquido      # VF Bruto - impostos (sem honorários)
-r.total_cedivel   # VF Líquido - honorários
-r.total_share     # Total Cedível × percentual do ativo
-r.descontos       # auditoria: base, alíquota e valor de cada desconto
+r.valor_atualizado  # crédito inteiro corrigido (principal + juros + selic)
+r.vf_bruto          # valor atualizado × share do fundo
+r.impostos          # PSS + IR-RRA + IRRF
+r.vf_liquido        # VF Bruto - impostos (sem honorários)
+r.total_cedivel     # VF Líquido - honorários
+r.descontos         # auditoria: base, alíquota e valor de cada desconto
 ```
 
 A cascata:
 
 ```
-VF BRUTO
-(-) impostos          duas trilhas mutuamente exclusivas (ver abaixo)
-(=) VF LÍQUIDO
-(-) honorários        base: bruto se destacados, líquido se não
-(=) TOTAL CEDÍVEL
-(×) share do ativo
+VALOR ATUALIZADO DO CRÉDITO
+(×) share do fundo    percentual do precatório que o fundo detém
+(=) VF BRUTO
+
+Honorários DESTACADOS              Honorários NÃO destacados
+(-) honorários  % do VF Bruto      (-) impostos    sobre o VF Bruto
+(=) base dos impostos              (=) VF LÍQUIDO
+(-) impostos    sobre essa base    (-) honorários  % do VF Líquido
+(=) TOTAL CEDÍVEL                  (=) TOTAL CEDÍVEL
 ```
+
+Todos os descontos partem do VF Bruto, isto é, da base proporcional ao share. A única exceção opcional é o IR-RRA. Com honorários destacados, os impostos incidem sobre a base **já sem os honorários**: cada componente (principal, juros, selic) é reduzido na proporção deles antes do PSS, do IR-RRA e do IRRF.
 
 **Duas trilhas tributárias, definidas pelo tipo de verba:**
 
@@ -600,14 +607,51 @@ VF BRUTO
 | `federal_servidores` (verba remuneratória) | **PSS** (% sobre o principal corrigido) + **IR-RRA** |
 | Todos os demais | **IRRF de 3%** sobre o montante global (art. 27 da Lei 10.833/2003, sem deduções) |
 
-- **PSS** — alíquota informada caso a caso, via `pss_percentual` (fração) **ou** `pss_valor` (R$ da conta na data base, do qual a alíquota é derivada). Incide só sobre o principal.
-- **IR-RRA** — `nº_meses × (base_mensal × alíquota − dedução)`, com `base_mensal = (principal − PSS) / nº_meses`, usando a tabela do IRPF vigente. Os juros não entram na base. A isenção da Lei 15.191/2025 não se aplica (rendimento recebido acumuladamente).
-- **IRRF 3%** — `aliquota_imposto` permite sobrepor a alíquota legal quando necessário.
-- **Honorários** — `honorarios_percentual`, com a base definida por `destacamento_honorarios`.
+- **PSS** — alíquota informada caso a caso, via `pss_percentual` (fração) **ou** `pss_valor` (R$ da conta na data base, do qual a alíquota é derivada). Incide só sobre o principal proporcional ao share.
+- **IR-RRA** — `nº_meses × (base_mensal × alíquota − dedução)`, com `base_mensal = (principal − PSS) / nº_meses`, usando a tabela do IRPF vigente. Os juros não entram na base. A isenção da Lei 15.191/2025 não se aplica (rendimento recebido acumuladamente). Como a tabela é progressiva, `ir_rra_base` escolhe sobre qual principal ela é aplicada: `"integral"` (padrão) apura o imposto sobre o crédito inteiro e o fundo arca com o seu share dele; `"proporcional"` apura direto sobre a parte do fundo.
+- **IRRF 3%** — sempre sobre a base proporcional (o VF Bruto). `aliquota_imposto` permite sobrepor a alíquota legal quando necessário.
+- **Honorários** — `honorarios_percentual`; `destacamento_honorarios` define se saem antes (destacados) ou depois (não destacados) dos impostos.
 
 ### Precisão
 
 Todo o motor opera em `Decimal` (nunca `float`), lendo os valores do banco como `Decimal(str(valor))`, para não acumular erro de ponto flutuante nas multiplicações encadeadas de fatores.
+
+## Interface da calculadora
+
+A tela fica em `web/calculadora.html` e conversa com o motor por um servidor local (só biblioteca padrão):
+
+```bash
+python servidor.py              # abre em http://127.0.0.1:8000
+python servidor.py --porta 8080
+```
+
+| Rota | O que faz |
+|------|-----------|
+| `GET /` | A tela da calculadora |
+| `GET /api/perfis` | Tipos de ativo e os campos que cada um exige |
+| `GET /api/status` | Último mês disponível de IPCA, IPCA-15, Selic e Taxa Legal |
+| `POST /api/calcular` | Roda o cálculo bruto + líquido e devolve a memória por regime |
+
+O preenchimento começa pelo **perfil do precatório**: até a escolha, os demais campos ficam bloqueados. Escolhido o perfil, a tela libera apenas os campos que ele usa (por exemplo, PSS e IR-RRA só para servidores, juros compensatórios só para desapropriação, e nenhum ano orçamentário no indébito tributário e no depósito judicial).
+
+O contrato fica em `src/api.py`, que não depende de HTTP: o mesmo módulo serve de base para o handler do Lambda. Valores monetários trafegam como **string** (`"1234567.89"`), nunca como número JSON, e percentuais vão em pontos percentuais nos campos `_pct` (`"11"` = 11%). A saída é arredondada a centavos só para exibição; o cálculo roda em `Decimal` integral.
+
+O HTML é **autocontido** (fonte Century Gothic em base64 e logo SVG oficial embutidos, conforme o brand pack da JiveMauá), então funciona servido por qualquer host estático, como o Amplify, apontando a constante `API` do script para o endpoint de produção.
+
+### Calculadora em arquivo único
+
+Para quem só precisa precificar, sem Python nem servidor, gere um `.html` autônomo:
+
+```bash
+python gerar_html.py                                   # dist/calculadora-precatorios.html
+python gerar_html.py --saida "C:/pasta/compartilhada/Calculadora de Precatórios.html"
+```
+
+O arquivo embute a tela, o código do motor (`src/calculo`, `src/api.py` e dependências) e uma cópia do `claims.db`. Basta abrir no Chrome: o motor roda no próprio navegador via [Pyodide](https://pyodide.org) (Python em WebAssembly), e os dados do cálculo não saem da máquina.
+
+- **Internet:** só o Pyodide vem da CDN jsDelivr, na primeira abertura (alguns MB); depois fica em cache.
+- **Índices:** o arquivo nasce com os índices da data em que foi gerado (o selo do topo mostra até quando). O botão **Atualizar índices** busca direto na API do BACEN SGS o que foi publicado depois — IPCA, IPCA-15, Selic, Taxa Legal e poupança, as únicas séries "vivas" que o motor lê (as tabelas do CJF e de juros param em dez/2021). O que é baixado fica guardado no navegador e é reaplicado a cada abertura. IRPF e feriados não são atualizados pelo botão: para eles, gere o arquivo de novo após a coleta.
+- **Mesmo motor:** não há segunda implementação da regra — o gerador copia o código Python atual. Qualquer mudança no motor passa a valer no próximo arquivo gerado.
 
 ## Consultar o banco
 
